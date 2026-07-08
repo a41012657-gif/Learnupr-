@@ -1936,6 +1936,34 @@ async function _envoyerNotifWhatsApp(phone, type) {
   } catch(e) {}
 }
 
+// ========== PREM HINT (flèche jaune vers le bouton Premium) ==========
+const PREM_HINT_FLAG = "lu_prem_hint_ferme";
+function dismissPremHint() {
+  try { localStorage.setItem(PREM_HINT_FLAG, "1"); } catch(e) {}
+  const b = document.getElementById("premHintBubble");
+  if (b) b.style.display = "none";
+}
+function positionPremHint() {
+  const b = document.getElementById("premHintBubble");
+  const btn = document.getElementById("premBtn");
+  const hdr = document.querySelector(".hdr");
+  if (!b || !btn || !hdr) return;
+  const btnRect = btn.getBoundingClientRect();
+  const hdrRect = hdr.getBoundingClientRect();
+  const centerX = (btnRect.left - hdrRect.left) + (btnRect.width / 2);
+  b.style.left = centerX + "px";
+}
+function updatePremHint(isPremium) {
+  const b = document.getElementById("premHintBubble");
+  if (!b) return;
+  let ferme = false;
+  try { ferme = !!localStorage.getItem(PREM_HINT_FLAG); } catch(e) {}
+  const doitAfficher = !isPremium && !ferme;
+  b.style.display = doitAfficher ? "flex" : "none";
+  if (doitAfficher) positionPremHint();
+}
+window.addEventListener("resize", positionPremHint);
+
 function updateProfilStatus() {
   const st = document.getElementById("pstatus");
   const aboBtn = document.getElementById("paboBtn");
@@ -1968,6 +1996,7 @@ function updateProfilStatus() {
     if (premBtn) { premBtn.textContent = "⭐ Free"; premBtn.className = "btn-prem free"; }
     if (premBanner) premBanner.style.display = "flex";
   }
+  updatePremHint(isPremium);
 }
 
 // ========== ADMIN — Vérification via Turso uniquement (aucun numéro en dur) ==========
@@ -10638,7 +10667,84 @@ async function appliquerUrlFix(id) {
 }
 
 
-// Onboarding supprimé — accès direct à la page principale
+// ========== GUIDE D'UTILISATION TÉLÉCHARGEABLE (PDF) ==========
+// PDF encodé en base64 et embarqué directement dans le code (même
+// principe que les icônes du manifest PWA) pour que le téléchargement
+// fonctionne même hors-ligne, sans dépendre de Cloudinary/Turso.
+const GUIDE_LEARNUPR_PDF_B64 = "JVBERi0xLjQKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG9jdW1lbnQgKG9wZW5zb3VyY2UpCjEgMCBvYmoKPDwKL0YxIDIgMCBSIC9GMiAzIDAgUiAvRjMgNCAwIFIgL0Y0IDcgMCBSCj4+CmVuZG9iagoyIDAgb2JqCjw8Ci9CYXNlRm9udCAvSGVsdmV0aWNhIC9FbmNvZGluZyAvV2luQW5zaUVuY29kaW5nIC9OYW1lIC9GMSAvU3VidHlwZSAvVHlwZTEgL1R5cGUgL0ZvbnQKPj4KZW5kb2JqCjMgMCBvYmoKPDwKL0Jhc2VGb250IC9aYXBmRGluZ2JhdHMgL05hbWUgL0YyIC9TdWJ0eXBlIC9UeXBlMSAvVHlwZSAvRm9udAo+PgplbmRvYmoKNCAwIG9iago8PAovQmFzZUZvbnQgL0hlbHZldGljYS1Cb2xkIC9FbmNvZGluZyAvV2luQW5zaUVuY29kaW5nIC9OYW1lIC9GMyAvU3VidHlwZSAvVHlwZTEgL1R5cGUgL0ZvbnQKPj4KZW5kb2JqCjUgMCBvYmoKPDwKL0NvbnRlbnRzIDEzIDAgUiAvTWVkaWFCb3ggWyAwIDAgNDE5LjUyNzYgNTk1LjI3NTYgXSAvUGFyZW50IDEyIDAgUiAvUmVzb3VyY2VzIDw8Ci9Gb250IDEgMCBSIC9Qcm9jU2V0IFsgL1BERiAvVGV4dCAvSW1hZ2VCIC9JbWFnZUMgL0ltYWdlSSBdCj4+IC9Sb3RhdGUgMCAvVHJhbnMgPDwKCj4+IAogIC9UeXBlIC9QYWdlCj4+CmVuZG9iago2IDAgb2JqCjw8Ci9Db250ZW50cyAxNCAwIFIgL01lZGlhQm94IFsgMCAwIDQxOS41Mjc2IDU5NS4yNzU2IF0gL1BhcmVudCAxMiAwIFIgL1Jlc291cmNlcyA8PAovRm9udCAxIDAgUiAvUHJvY1NldCBbIC9QREYgL1RleHQgL0ltYWdlQiAvSW1hZ2VDIC9JbWFnZUkgXQo+PiAvUm90YXRlIDAgL1RyYW5zIDw8Cgo+PiAKICAvVHlwZSAvUGFnZQo+PgplbmRvYmoKNyAwIG9iago8PAovQmFzZUZvbnQgL1N5bWJvbCAvTmFtZSAvRjQgL1N1YnR5cGUgL1R5cGUxIC9UeXBlIC9Gb250Cj4+CmVuZG9iago4IDAgb2JqCjw8Ci9Db250ZW50cyAxNSAwIFIgL01lZGlhQm94IFsgMCAwIDQxOS41Mjc2IDU5NS4yNzU2IF0gL1BhcmVudCAxMiAwIFIgL1Jlc291cmNlcyA8PAovRm9udCAxIDAgUiAvUHJvY1NldCBbIC9QREYgL1RleHQgL0ltYWdlQiAvSW1hZ2VDIC9JbWFnZUkgXQo+PiAvUm90YXRlIDAgL1RyYW5zIDw8Cgo+PiAKICAvVHlwZSAvUGFnZQo+PgplbmRvYmoKOSAwIG9iago8PAovQ29udGVudHMgMTYgMCBSIC9NZWRpYUJveCBbIDAgMCA0MTkuNTI3NiA1OTUuMjc1NiBdIC9QYXJlbnQgMTIgMCBSIC9SZXNvdXJjZXMgPDwKL0ZvbnQgMSAwIFIgL1Byb2NTZXQgWyAvUERGIC9UZXh0IC9JbWFnZUIgL0ltYWdlQyAvSW1hZ2VJIF0KPj4gL1JvdGF0ZSAwIC9UcmFucyA8PAoKPj4gCiAgL1R5cGUgL1BhZ2UKPj4KZW5kb2JqCjEwIDAgb2JqCjw8Ci9QYWdlTW9kZSAvVXNlTm9uZSAvUGFnZXMgMTIgMCBSIC9UeXBlIC9DYXRhbG9nCj4+CmVuZG9iagoxMSAwIG9iago8PAovQXV0aG9yIChMZWFyblVwcikgL0NyZWF0aW9uRGF0ZSAoRDoyMDI2MDcwODIwMzcxMSswMCcwMCcpIC9DcmVhdG9yIChcKHVuc3BlY2lmaWVkXCkpIC9LZXl3b3JkcyAoKSAvTW9kRGF0ZSAoRDoyMDI2MDcwODIwMzcxMSswMCcwMCcpIC9Qcm9kdWNlciAoUmVwb3J0TGFiIFBERiBMaWJyYXJ5IC0gXChvcGVuc291cmNlXCkpIAogIC9TdWJqZWN0IChcKHVuc3BlY2lmaWVkXCkpIC9UaXRsZSAoR3VpZGUgZCd1dGlsaXNhdGlvbiBMZWFyblVwcikgL1RyYXBwZWQgL0ZhbHNlCj4+CmVuZG9iagoxMiAwIG9iago8PAovQ291bnQgNCAvS2lkcyBbIDUgMCBSIDYgMCBSIDggMCBSIDkgMCBSIF0gL1R5cGUgL1BhZ2VzCj4+CmVuZG9iagoxMyAwIG9iago8PAovRmlsdGVyIFsgL0FTQ0lJODVEZWNvZGUgL0ZsYXRlRGVjb2RlIF0gL0xlbmd0aCA0NDkKPj4Kc3RyZWFtCkdhdCRyOTJFRGkmQUltP2JZOUFJXD9pTmZYLDIvPSIlZzFHV0RILUYnV0NaXl5OWG05T1YyLDQySklAM2MkWVFpIVlHcD1tckFnKj1NVmcxIUQrXWo1Uko1PzFPKENUNmUzSXRGYkcvQisnQk9xKG0oUnFUYU1UXjhJIW1DQ25SQWpYP2puRis8QGFDYiE8NGNhZkh1SGsmJyJtNjpxWF9FYDMicDZoKDJyMWZEWVBrV2tkdClRLzhqcClKImVsTmlncTIzQTdfQipcP3JVJUQqYSM6KmIvMjUjLE04T1tccENfSSQqMzdQMltPMD8hRG9lWz49b1RVSS02X24vM28tYWZDIi5pN1snTFEyXCg2R2tbNXBKbVk0RS1Bb0JVJykzYEA/Q1kiQVlDQksnVCFeUCdrY0cidUlFaWQ9N1ZMWFk9Xk9fZUhHRktcRyxuamByI2UnKFFXXjZTWVwwJW4vWDcldVpLNz5aLWUlOFNkLVReMyclSkslNC5OWD9aJFNubFlATD9oSTpcJT0ucmYzXzlhZUtET3FdXFI4Lko1UjRLKDtgMSVNcEtoMUVeVDlVPFImOiY+JW0hNGRfI34+ZW5kc3RyZWFtCmVuZG9iagoxNCAwIG9iago8PAovRmlsdGVyIFsgL0FTQ0lJODVEZWNvZGUgL0ZsYXRlRGVjb2RlIF0gL0xlbmd0aCAxNzc0Cj4+CnN0cmVhbQpHYXUwQzlsbyZJJkFAc0JtJj0jSCQ0TUlCXEt1LkFSPnNAT0BQdGpvIWBRPVQkcTg7XWwobjpOSS9saXFaNmAuXWdzSUJXJjwiTl5MWV1GaStIRSlgczYhJUxHO0Q7VytAbyVsaDMmJUg4QCZcTTU8SEQ7bCI6VkVcWilcMWNAUkg+aisoNVNaT2owPihoP09fQS9CLTdrZTJtIkFuYEBoT3NwZFUzL2hSW1VyZTxrW2V0MlhrdXU1XzxiZT0iXjdzOl5SZjJTWEomSjQ6Sy5wYlMpWSZuNVJCXDEjMHUuN2VhWGxPPjdTSlVcT1YraUglMEkyK2ZVWXQpcCxpLV8mPEhxKmo6OyxWMFJAQVJIKj5DbDtyKFVxISxbOz4lNz9wOShrVEtcaGVza25qMWw8QDk+UTxRTS5QVExUbWNlMVYiPl5vJ1MkMnIsblU9Yj8wdVxETUFZNT0uQ2RILjYmX11zTHFwRGhoJmhdUCR0OlFxNWYjRW1KTnEjbVNfKGk6Q2dBdSFTPnQsPjBZKHBsPFJQL2dXJltrJz83Zy4mVidhYUBgU15LNiYuKSkmUUA7bzMvZi5ON1VaZnJmYnA5SnI+PkloP2YvPlJ1YGgxUCpBVGBAJ0NSVW1cbXFTaUYuQk5xV1FEUnA2PmEnOldwU04sJ2xAczFBNTNDVUddKFMwRDxwLEleYi9VJkUiM1xdZC5fUEwvPE40WzFkZzlVVis2XG9ZLSUibDxmPGYzI0BWPztqVzRRaGYoTkgzTilTJ1k4Sy4yQEErJGY4U2VRaWxMZ2RXT1RGZl1GaSQ8KEdcbFNPVi5PLEoiJjU/JWBKZEo0OT5mOTxMR10kSWdaXlY2WURJXy9jaF5IKWNUYVM2JXBNcTgrNF4lQi1JLCovXihhUCk/UkYycm0sUSl0ZyZmMGMuVCo+KDUhS2VyMGdXWjBLcSU6Ki9OMiFvPFU5dE8hVGIxKSpeXCVWJDkpUT8vWmVbZD1oaClhUlQ4JEtRTkg8W1hDPy0qVzlOJ2xBck8tZFQsTVdVcT9PYVU2Py1rTjhyaT1pIzJFOnVSXWssV2w/W1ttT0RlWkM5SEsrM25LZEt1MWZVTTpLN2FEI05CZSooO2k4UzMhTWk1OzgmayJNR0U4M3NTI2NfXmBycyw2Jio7NkkiREhPNVRvSjEjcytPW2pNIlEpNEtKO1dfLjBfNmNqZSM8RDowXTFNRCE4KWp1PypQQz8xU0FASClHOzJqN11pKUJrZD5bV0xrNFtBQFlKWj1ZTiFnTVY7MScoY2FnZFJBLCxZSzM4RlAsT14lQkBPa3Q0PSZeYV0sciZLTV9sbVomWUFmO25kSmlOXzxMaV9xLUNAYHU+JSU/JG1OK2BwW1E6YitxaSFMR0RvTFYsUzI8X15fMiwmQyclXFNiWGolPzgxXWdKcCwuVVVRalA8VTEuL1ZQMVZBb1pgLnQtZzcyJClRc3BqVjc2XEReLDJbYylsam06KmtcJGByW1IjbjhmJVlXZC91NlY6SF1vYkYtKyY7Yy5CSCxbKWFVcC9xIU9jN29FQldpZVZiJ2BRUFk2ajpJQC1sR2NrVEIqWCwvb3VBPEhuR2Y2ZzhgVjJLK2VRRkEuLWVeaD5wRzspJj5Ib0VWYG9HPVhuKyJETS1Da0djUz11bywrQl9PNUpzRHIlNXJoLFoybS5cVXFpSGdtVWovOzpYYXFLajdsYXVfc2o8aHEvZFZVRCVPM0lfNiYySnBudHJPJT4mVkVrUHJIb1JhRTo9P08+WC1gLzp0bUZoZyJUVmovRShURXNuLypWWUpIXXU8b3NCNXM4UkVibVNcbydvZiZwbygoYGk5TUBYQWxbVUxZKSFJRmNCX0VVUFcxPHE/MkxAcnJPcFI9aDhSXiRROlBJZGxyTlQzLEdsYDYjMjhoTlE8aHM4RlFLc0RAZ0EqPmM5XE9WRkIvKFtgXUluLjFyZFgtJTA8b2cvQG9OZyFLUTRzITcuYVg4KDA/L2YwYDVVXippQik9LCRoQTBWS3BcJGdMSmtFQCIsWTxVXmZrPkhNP0JCIygjPm81MEVKPy4wWz4ySTdOLDZVM2ElUD5CUC41ZnU2NGJFW1JiMzhtb1hHMlZmb0opbTQ2Oj1KWSo7ayNyUW5nLD5UIz0qSDRGa09PTlZLP0M4RDtpK0plRDhyOC9vZ1NbYm5vZUduWmF0T09MZU0pcnBbI1ddVlomNHFOUy5XTE9FQ01pLFUlYkRXaDRIY3M4ajNaOFVdPFhWYjFNVDpMcSQ9LD4qOCdRWipgZDRiVGwqKTBmdDlMJzFbJyxWL2xFW3FcXVRGckk3KGo2YklLKXRYOHMuYmQtIU1wdSppcn4+ZW5kc3RyZWFtCmVuZG9iagoxNSAwIG9iago8PAovRmlsdGVyIFsgL0FTQ0lJODVEZWNvZGUgL0ZsYXRlRGVjb2RlIF0gL0xlbmd0aCAxNjUyCj4+CnN0cmVhbQpHYiEjWz8jU0lVJ1JlPDJcNTAvKFwxQzQuWklHM2FoM25AM1x1KEN0XiVkO2RCcFhPZlU1dVxbcEgsMCU8REsoJm02ImMxJmtGOWpGWysvM3BJWiI7OlxhdDVOOUtyKT9DaE47UDMtTm0rVWAiNTYjWW01Ml5kQE4pLGtFJ2ZyaFlINzwnIlEkWTBuMC4yRSxFJ0c0PWFwT0xuIihVSnE6SkkiZmQvLXIiKVUzVDRsJF9zZCM2V3FmJ2FyLUlqQGpqPTVxJ1ZVcUdHYTlYVjdjby9Ra0NTWVVjPkxpKmwyIW9tPSc6XU5gMEBXNW5sLG9LN21RJThYNiJCbytSRVhIa3FMVScnMjdSRnJWbicqOVs8VFNiRmJsYDkwRihVRSwlJjs4P0hPMEAvYlRjbTg+dGdqKyEuSWhbbEpmOyVRTGZnMF5iLkMkOT9SQEJYY0dNWHJwQHVKIXNgP1sraj5HS3ErWm4xZGZqREAmVkMoVmprQGJdQ2taLFBzVml0OThmaVQ9XU9YRFJmZVJyUlYmT2kqVGdDczgrXj5hTWo0PSUuPT0ybkVdQj0+UUBeWl1SN0xaSlkzSCQkRzJ1YllhXUQ8PXB0TiF1cT1HSixYVG1LUk5QP2lmblMuOiREdW02YjIiS0UmMj4laC90bjRqMkNyZ1c7OjAwR01SdWI4SmU+MzJyJjVBSGdjSUFPO1RNYGA8cTBMWW8iWEo4T05mWTlTZCgnJ2VwR1lKSShgNiFrcmZyI21kJWUqQDFCJSNUOmw7PTdNL09RZllaVUdETk5dSkptQD1gYjFxMDgrSmQ8JScxLlhWUkBxI2FGI3NXSG5gO0tLT1dBYCtkQ0gxTWJaTXMkWD5xakUwM1A/KGxyNyRURyZNbShXWlxRIkpdPHVnIk1uQ0I2cSspTkQ2PVhyKWhTaTk5I2YjNyJgPi5BPTtfbzI/UyZWRm4vVCw1KkNJYCs6PjxyIT8lLDNFSSQ0MF4hVmxdbDgoL1dOJzknVltDKV0tZSRaP08xK05JLz1haTFCcmQnQF1yQz9JK0AxSExAIVlNNlcnX2oqKltcZDlgKiJqOyc3aG4tVUdRRlJgbTREY0s4bHMhO2J0UiFALyReVlNjaCYuUEthOmBxZDVLIV9YYFd1aD8nYV9VZ1JlKyJSKU5SPXJ0Vl5PVUokQjhDNigyN29fTjUwcWtMSkkmRnAmSyhJU2NNalRVRilKMURXN04jbyMrLlQuTT9bJkcxaiEiKDNAa0QkYzNhLD9Caz0nNkY9LnBZbmgoYF8mJUQoO245P2trVVptPTZoV1hhVkswVUM1TnUnNV4/XTo/VEJeVD1ySWFpbCpASz5gWkhrJFdvWig1WUZYQmhuYzIibV1CNTo7azwpMGhtYytkWjw8W15gVzUlckVQK1M9ZzsiWEQiYWRnaTEoZCQycTUnaWpXUDhLblk3PmYsUGAvNFwsYmItL0dOPzpeRTAiYShZWF5kZCg+ZyY8biIzXVEnZzstY2R1KFItWGt1XTMpOSwwISwsRyJZSDQ7OyknRVBMO2dKM3NoPEJBMV1xNm5BaD0pYGBdMktQT24kRjlLTWhSKV81IS5WdEtKNTEsQ0hdNiIuOUFwMF5UbWAtXig9b3VCI0csQl1FODJGYj1BNW02L3MtIk9xVDFjTVJSWkhMKHFaP1gvLEsuPERYK1I2VW5aWmtzKmQ3YDNeazVmTm5kcHJSIlVpUnEoWyFvPEdVcycuaUlUV2xMYD9ZPGw2Y11LMSFEciQ4NS8+KFJiSD09JCphPjZMdE4yTDg3LVw1UzFIYW5yRTtSNj9cckRoQyUtN1A2YTg0Yk1AbUI1ZWFSIkI2RFpVJUQmUnQ/OTBUYGg9YjFaanBTJGxdLzk6JD07SS9QTXItZFFOU18yLyRxLlUsSSRBQ0hudFwxM1teY1c/VD4mJCgqJERMUS06YVBKLD1cazI/ISdjM2NhOEJqNTlLQkRRZTs+QC43XGheO0pNOEVwUlYmKi0yYm5gZHBoYWdJMG47KEpcXFFAWSNDLCdiYjE3cD0vLkZJaG1EajZQai8rQyJZSFdvaC80IitlIk0pKTU/JFIyW0FbPz5bLCMtU1NjZjVyMD42QWhlYWswIkM8Tm9dUmVxMSdGPGlLJidkL3EpciN1RVcrIi8uWz8lMGAzTW0vOGdJZlM3bS4lVTg8R1Zvcj1+PmVuZHN0cmVhbQplbmRvYmoKMTYgMCBvYmoKPDwKL0ZpbHRlciBbIC9BU0NJSTg1RGVjb2RlIC9GbGF0ZURlY29kZSBdIC9MZW5ndGggNDA2Cj4+CnN0cmVhbQpHYXNiVTBsT29fJjs+PVdgVG91RGVccTE3OF1LMkVWMCZac0RDYyJJI1F0V2oiTFw5REcqR0FyOzVwaktLQ0E3KEk8UVomMzR0Nk80WVNhXGJXKitfcSNWcDUwUVhtcWQ7ZFpJO1BtblFuKHNJMzNuIl44TU9bIUwsRkpxQjsmLT9lR05xPEAvPGE9KkE1Ji41JUM9KiJtVkx1TCVpI2pIVWNAI0RKYVFzVDBGcSVXLENKMlFPQ0M3TCNzZW1DIjspL1ZEXGw2UUw0XEhBT1tyJmAwXShJazIwakIsL2NlQypQRjpkSkZlZnNQOTk2WmlCPWxqNWVRQS1vNCZjVGVHXVBvX0MnVCovLmghLDlCWyc9YmlfbWQ/Y14zb1tqKSMoTS8uRTtDO2JAcjhOck5BJEpCPHFdNSIsI2QiQTpfTidbZ1RBXXAmOTwuY05MailuXURESHIyZHApZmUhWUYkIzUnX3MvX2FDcy1HWl9IY1MyMlYpKT5pK19BZzZXZ3EibWFxO1txLT5vW04uKGRmWGQ7UX4+ZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgMTcKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDYxIDAwMDAwIG4gCjAwMDAwMDAxMjIgMDAwMDAgbiAKMDAwMDAwMDIyOSAwMDAwMCBuIAowMDAwMDAwMzEyIDAwMDAwIG4gCjAwMDAwMDA0MjQgMDAwMDAgbiAKMDAwMDAwMDYyOSAwMDAwMCBuIAowMDAwMDAwODM0IDAwMDAwIG4gCjAwMDAwMDA5MTEgMDAwMDAgbiAKMDAwMDAwMTExNiAwMDAwMCBuIAowMDAwMDAxMzIxIDAwMDAwIG4gCjAwMDAwMDEzOTEgMDAwMDAgbiAKMDAwMDAwMTY4MiAwMDAwMCBuIAowMDAwMDAxNzYwIDAwMDAwIG4gCjAwMDAwMDIzMDAgMDAwMDAgbiAKMDAwMDAwNDE2NiAwMDAwMCBuIAowMDAwMDA1OTEwIDAwMDAwIG4gCnRyYWlsZXIKPDwKL0lEIApbPGVjYzA4NjQ0ZmZmYzNhNDViNTY5OWVjNGZhMTkwYmRlPjxlY2MwODY0NGZmZmMzYTQ1YjU2OTllYzRmYTE5MGJkZT5dCiUgUmVwb3J0TGFiIGdlbmVyYXRlZCBQREYgZG9jdW1lbnQgLS0gZGlnZXN0IChvcGVuc291cmNlKQoKL0luZm8gMTEgMCBSCi9Sb290IDEwIDAgUgovU2l6ZSAxNwo+PgpzdGFydHhyZWYKNjQwNwolJUVPRgo=";
+
+function telechargerGuideLearnUpr() {
+  try {
+    const byteChars = atob(GUIDE_LEARNUPR_PDF_B64);
+    const byteNumbers = new Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: "application/pdf" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "Guide-LearnUpr.pdf";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    showToast("📘 Guide téléchargé !", "success");
+  } catch(e) {
+    console.warn("[Guide LearnUpr] Erreur téléchargement:", e);
+    showToast("❌ Impossible de télécharger le guide", "error");
+  }
+}
+
+// ========== ONBOARDING PREMIER LANCEMENT ==========
+// Affiché une seule fois par appareil (flag localStorage), avant l'accès à
+// la page principale — répond au retour terrain (2026) : les élèves,
+// notamment en grandes classes, ne comprenaient ni comment entrer leur
+// numéro ni comment naviguer entre les onglets faute d'explication au
+// premier lancement.
+const ONBOARDING_FLAG = "lu_onboarding_vu";
+let _onbSlideActuel = 0;
+const ONB_TOTAL_SLIDES = 4;
+
+function onboardingDemarrerSiPremierLancement() {
+  try {
+    if (localStorage.getItem(ONBOARDING_FLAG)) return;
+  } catch(e) { return; }
+  const overlay = document.getElementById("onboardingOverlay");
+  if (!overlay) return;
+  _onbSlideActuel = 0;
+  overlay.classList.add("show");
+}
+
+function _onbAfficherSlide(n) {
+  document.querySelectorAll(".onb-slide").forEach(el => {
+    el.style.display = (Number(el.dataset.slide) === n) ? "block" : "none";
+  });
+  document.querySelectorAll(".onb-dot").forEach(el => {
+    const actif = Number(el.dataset.dot) === n;
+    el.style.background = actif ? "var(--p)" : "var(--border)";
+    el.style.width = actif ? "18px" : "8px";
+    el.style.borderRadius = actif ? "4px" : "50%";
+  });
+  const nextBtn = document.getElementById("onbNextBtn");
+  if (nextBtn) nextBtn.textContent = (n === ONB_TOTAL_SLIDES - 1) ? "Commencer 🚀" : "Suivant";
+}
+
+function onboardingSuivant() {
+  _onbSlideActuel++;
+  if (_onbSlideActuel >= ONB_TOTAL_SLIDES) { onboardingFermer(); return; }
+  _onbAfficherSlide(_onbSlideActuel);
+}
+
+function onboardingFermer() {
+  try { localStorage.setItem(ONBOARDING_FLAG, "1"); } catch(e) {}
+  const overlay = document.getElementById("onboardingOverlay");
+  if (overlay) overlay.classList.remove("show");
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  _onbAfficherSlide(0);
+  onboardingDemarrerSiPremierLancement();
+});
 
 // ========== VIDÉO-CONFÉRENCE (Jitsi Meet) ==========
 const VISIO_JITSI_BASE = "https://meet.jit.si/";
@@ -14913,3 +15019,4 @@ window.viewOfflineChapter = viewOfflineChapter;
 window.visioUpdateRoomPreview = visioUpdateRoomPreview;
 window.voirCodesPremium = voirCodesPremium;
 window.voirUrlsFichiers = voirUrlsFichiers;
+
