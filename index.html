@@ -404,6 +404,11 @@ body.dark select,body.dark .input{background:var(--bg) !important;color:var(--te
 .btn-prem.free{background:rgba(255,255,255,0.1);color:white;border:1px solid rgba(255,255,255,0.18);}
 .btn-prem.paid{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#1A1530;}
 .btn-prem:active{transform:scale(0.95);}
+/* ========== PREM HINT (flèche vers Premium) ========== */
+#premHintBubble{position:absolute;top:78px;left:0;z-index:40;display:none;align-items:center;gap:6px;background:#FFD166;color:#1A1530;font-weight:800;font-size:11px;padding:8px 12px;border-radius:12px;box-shadow:0 6px 16px rgba(0,0,0,0.25);cursor:pointer;max-width:180px;line-height:1.25;animation:premHintFloat 1.6s ease-in-out infinite;transform:translateX(-50%);}
+#premHintBubble::after{content:'';position:absolute;top:-8px;left:50%;margin-left:-7px;border-left:7px solid transparent;border-right:7px solid transparent;border-bottom:8px solid #FFD166;}
+#premHintBubble .phclose{margin-left:2px;font-weight:900;opacity:0.6;}
+@keyframes premHintFloat{0%,100%{transform:translateX(-50%) translateY(0);}50%{transform:translateX(-50%) translateY(5px);}}
 .btn-code{background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:18px;padding:6px 11px;color:rgba(255,255,255,0.8);font-size:10px;font-weight:700;cursor:pointer;}
 .btn-dark-toggle{background:rgba(255,255,255,0.12);border:none;border-radius:50%;width:32px;height:32px;cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center;transition:all 0.2s;}
 .btn-dark-toggle:active{transform:scale(0.9);}
@@ -482,7 +487,7 @@ body.dark select,body.dark .input{background:var(--bg) !important;color:var(--te
 .res-share:active{background:rgba(37,211,102,0.15);}
 
 /* ========== BOTTOM NAV ========== */
-.bnav{display:flex;background:var(--card);border-top:1px solid var(--border);padding:6px 0 10px;position:sticky;bottom:0;z-index:50;height:var(--nav-h);}
+.bnav{display:flex;background:var(--card);border-top:1px solid var(--border);padding:6px 0 10px;position:fixed;left:50%;transform:translateX(-50%);bottom:0;width:100%;max-width:430px;z-index:500;height:var(--nav-h);padding-bottom:calc(10px + var(--safe-bottom));}
 .nbtn{flex:1;padding:8px 4px 2px;background:transparent;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;position:relative;}
 .nico{width:36px;height:36px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:18px;transition:all 0.2s;}
 .nico.on{background:rgba(109,40,217,0.13);transform:scale(1.05);}
@@ -813,9 +818,10 @@ select.input{cursor:pointer;}
       <div class="hbts">
         <button class="btn-notif" onclick="showPage('main');showTab('notifs')">🔔<span class="notif-badge hidden" id="notifBadge">3</span></button>
         <button class="btn-code" onclick="showPage('codepage')">🔑</button>
-        <button class="btn-prem paid" id="premBtn" onclick="openAbo()">⭐ Premium</button>
+        <button class="btn-prem paid" id="premBtn" onclick="dismissPremHint();openAbo()">⭐ Premium</button>
         <button class="btn-dark-toggle" id="darkModeToggle">🌙</button>
       </div>
+      <div id="premHintBubble" onclick="dismissPremHint();openAbo()">👉 Clique ici pour passer en Premium et tout débloquer<span class="phclose" onclick="event.stopPropagation();dismissPremHint()">✕</span></div>
     </div>
     <!-- SEARCH -->
     <div class="swrap">
@@ -1367,22 +1373,18 @@ select.input{cursor:pointer;}
         <div class="login-card">
           <h4>🔑 Connexion</h4>
 
-          <!-- ⚠️ Message avertissement non-admins -->
-          <div style="background:linear-gradient(135deg,#FEF3C7,#FDE68A);border:1.5px solid var(--gold);border-radius:14px;padding:12px 14px;margin-bottom:14px;position:relative">
-            <div style="font-weight:800;font-size:12px;color:#92400E;margin-bottom:5px;display:flex;align-items:center;gap:6px">
-              ⚠️ Important — Lis avant de continuer
+          <!-- ℹ️ Explication claire : ce champ sert à TOUT LE MONDE -->
+          <div style="background:linear-gradient(135deg,#DBEAFE,#BFDBFE);border:1.5px solid #3B82F6;border-radius:14px;padding:12px 14px;margin-bottom:14px;position:relative">
+            <div style="font-weight:800;font-size:12px;color:#1E3A8A;margin-bottom:5px;display:flex;align-items:center;gap:6px">
+              ℹ️ Pourquoi entrer mon numéro ?
             </div>
-            <div style="font-size:11px;color:#78350F;line-height:1.7">
-              <b>Tu n'es pas administrateur ?</b><br>
-              Ne remplis <b>aucun champ</b> ici.<br>
-              Clique simplement sur <b>« Fermer »</b> et utilise l'application normalement.
+            <div style="font-size:11px;color:#1E3A8A;line-height:1.7">
+              Entre ton numéro WhatsApp ci-dessous pour créer ton compte élève, sauvegarder ta progression et débloquer ton statut Premium si tu es abonné.<br>
+              <b>C'est pour tout le monde</b> — pas seulement pour les administrateurs.
             </div>
-            <button onclick="showTab('accueil')" style="margin-top:10px;width:100%;background:#92400E;color:white;border:none;border-radius:10px;padding:9px;font-weight:800;font-size:12px;cursor:pointer">
-              ✕ Fermer — Je ne suis pas admin
-            </button>
           </div>
 
-          <input type="tel" class="login-input" id="loginPhone" placeholder="Numéro WhatsApp (9 chiffres)" maxlength="9" inputmode="numeric">
+          <input type="tel" class="login-input" id="loginPhone" placeholder="Numéro WhatsApp (9 chiffres, sans 237)" maxlength="9" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'').slice(0,9)">
           <div class="login-role-display" id="roleDisplayWrapper" style="display: flex;">
             <span>👤</span>
             <span id="roleDisplay">⭐ ADMINISTRATEUR</span>
@@ -1522,6 +1524,7 @@ select.input{cursor:pointer;}
           <div class="mitem" onclick="contacterAssistance()"><div class="miico">📲</div><div class="mitxt">Assistance <span id="assistanceBadge" style="font-size:9px;background:var(--gold2);color:white;padding:1px 6px;border-radius:6px;margin-left:4px">⭐ Prioritaire si Premium</span></div><div class="miarr">›</div></div>
           <div class="mitem" onclick="toggleDarkMode()"><div class="miico">🌙</div><div class="mitxt">Mode sombre</div><div id="darkStatus" class="miarr" style="font-size:11px;font-weight:700">OFF</div></div>
           <div class="mitem" onclick="lancerModeExamen()"><div class="miico">🏫</div><div class="mitxt">Mode Examen (anti-triche)</div><div class="miarr">›</div></div>
+          <div class="mitem" onclick="telechargerGuideLearnUpr()"><div class="miico">📘</div><div class="mitxt">Guide d'utilisation (PDF)</div><div class="miarr">⬇️</div></div>
           <div class="mitem" onclick="ouvrirLegal('cgu')"><div class="miico">📜</div><div class="mitxt">Conditions d'utilisation (CGU)</div><div class="miarr">›</div></div>
           <div class="mitem" onclick="ouvrirLegal('confidentialite')"><div class="miico">🔒</div><div class="mitxt">Politique de confidentialité</div><div class="miarr">›</div></div>
           <div class="mitem" onclick="ouvrirLegal('mentions')"><div class="miico">📋</div><div class="mitxt">Mentions légales</div><div class="miarr">›</div></div>
@@ -1936,6 +1939,7 @@ select.input{cursor:pointer;}
 </div>
 
 <script type="module" src="/src/main.js"></script>
+
 
 <!-- ========== CONSENTEMENT RGPD (Fix 19) ========== (Fix 19) ========== -->
 <div id="consentBanner" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:10000;background:var(--p3);color:white;padding:16px 20px;max-width:430px;margin:0 auto;border-radius:16px 16px 0 0">
@@ -2550,23 +2554,65 @@ select.input{cursor:pointer;}
   <span>Installer l'app du Lycée du Manengouba (1,3 Mo)</span>
 </button>
 
+<!-- ========== ONBOARDING PREMIER LANCEMENT ========== -->
+<div class="ovl" id="onboardingOverlay" style="z-index:9999">
+  <div class="modal" style="max-height:88vh;overflow-y:auto;text-align:center">
+    <div class="mhdle"></div>
+
+    <div class="onb-slide" data-slide="0">
+      <div style="font-size:52px;margin-bottom:10px">🎓</div>
+      <div class="mtit">Bienvenue sur LearnUpr !</div>
+      <div class="msub" style="line-height:1.7">L'application qui t'aide à réussir au Lycée du Manengouba : cours, exercices, examens et bien plus.</div>
+    </div>
+
+    <div class="onb-slide" data-slide="1" style="display:none">
+      <div style="font-size:52px;margin-bottom:10px">📱</div>
+      <div class="mtit">Entre ton numéro</div>
+      <div class="msub" style="line-height:1.7">Dans l'onglet <b>Profil</b>, entre ton numéro WhatsApp (9 chiffres, sans le 237) pour créer ton compte et sauvegarder ta progression.<br><br><b>C'est pour tout le monde</b>, pas seulement les administrateurs.</div>
+    </div>
+
+    <div class="onb-slide" data-slide="2" style="display:none">
+      <div style="font-size:52px;margin-bottom:10px">🧭</div>
+      <div class="mtit">Retrouve-toi facilement</div>
+      <div class="msub" style="line-height:1.7;text-align:left">
+        📘 <b>Cours</b> — leçons par matière<br>
+        📝 <b>Examens &amp; Séq.</b> — épreuves et séquentielles<br>
+        📂 <b>Trav. Dirigés</b> — exercices et corrections<br>
+        🎬 <b>Autres / Vidéos</b> — ressources complémentaires<br>
+        ➕ <b>Plus</b> — Planning, Simulateur, Progression…
+      </div>
+    </div>
+
+    <div class="onb-slide" data-slide="3" style="display:none">
+      <div style="font-size:52px;margin-bottom:10px">🚀</div>
+      <div class="mtit">C'est parti !</div>
+      <div class="msub" style="line-height:1.7">Choisis ta classe et tes matières dans l'accueil pour commencer. Bon travail !</div>
+    </div>
+
+    <div style="display:flex;justify-content:center;gap:6px;margin:16px 0">
+      <span class="onb-dot" data-dot="0" style="width:8px;height:8px;border-radius:50%;background:var(--p);transition:all .2s"></span>
+      <span class="onb-dot" data-dot="1" style="width:8px;height:8px;border-radius:50%;background:var(--border);transition:all .2s"></span>
+      <span class="onb-dot" data-dot="2" style="width:8px;height:8px;border-radius:50%;background:var(--border);transition:all .2s"></span>
+      <span class="onb-dot" data-dot="3" style="width:8px;height:8px;border-radius:50%;background:var(--border);transition:all .2s"></span>
+    </div>
+
+    <div style="display:flex;gap:8px">
+      <button id="onbSkipBtn" onclick="onboardingFermer()" style="flex:1;background:none;border:none;color:var(--t3);font-size:12px;font-weight:700;padding:12px;cursor:pointer">Passer</button>
+      <button id="onbNextBtn" onclick="onboardingSuivant()" style="flex:2;background:linear-gradient(135deg,var(--p),var(--p2));border:none;border-radius:12px;padding:12px;color:white;font-weight:800;font-size:13px;cursor:pointer">Suivant</button>
+    </div>
+  </div>
+</div>
+
 <!-- ========== MODAL ENVOI PREUVE DE PAIEMENT ========== -->
 <div id="preuvePaiementModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9100;align-items:flex-end;justify-content:center" onclick="if(event.target===this)fermerEnvoiPreuvePaiement()">
   <div style="background:var(--card);border-radius:20px 20px 0 0;padding:24px 20px 36px;width:100%;max-width:430px;border-top:3px solid #FF8C00;max-height:85vh;overflow-y:auto">
     <div style="font-weight:900;font-size:16px;margin-bottom:4px;color:var(--text)">📸 Envoyer ma preuve de paiement</div>
-    <div style="font-size:11px;color:var(--t2);margin-bottom:16px">Choisis comment nous envoyer la capture d'écran de ton paiement Orange Money — ton accès Premium sera activé dès vérification.</div>
+    <div style="font-size:11px;color:var(--t2);margin-bottom:16px">Choisis la capture d'écran de ton paiement Orange Money — ton accès Premium sera activé dès vérification.</div>
 
-    <!-- Option 1 : WhatsApp -->
-    <div style="background:linear-gradient(135deg,#25D366,#128C7E);border-radius:14px;padding:14px;margin-bottom:12px;color:white">
-      <div style="font-weight:800;font-size:13px;margin-bottom:4px">💬 Par WhatsApp</div>
-      <div style="font-size:11px;opacity:0.9;margin-bottom:10px">Ouvre WhatsApp avec un message déjà prêt — joins simplement ta capture d'écran et envoie.</div>
-      <button onclick="envoyerPreuvePaiementWhatsApp()" style="width:100%;background:white;color:#128C7E;border:none;border-radius:10px;padding:11px;font-weight:800;font-size:13px;cursor:pointer">📲 Ouvrir WhatsApp</button>
-    </div>
-
-    <!-- Option 2 : Upload direct -->
+    <!-- Envoi direct -->
     <div style="background:var(--bg);border-radius:14px;padding:14px;margin-bottom:6px;border:1.5px solid var(--border)">
       <div style="font-weight:800;font-size:13px;margin-bottom:4px;color:var(--text)">📤 Envoi direct dans l'app</div>
-      <div style="font-size:11px;color:var(--t2);margin-bottom:10px">Choisis directement ta capture — elle sera transmise aux modérateurs sans passer par WhatsApp.</div>
+      <div style="font-size:11px;color:var(--t2);margin-bottom:10px">Choisis directement ta capture — elle sera transmise aux modérateurs.</div>
       <input type="file" id="preuvePaiementInput" accept="image/png,image/jpeg,image/jpg,image/webp,image/gif" style="display:none" onchange="envoyerPreuvePaiementUpload(this)">
       <button onclick="document.getElementById('preuvePaiementInput').click()" id="btnUploadPreuve" style="width:100%;background:var(--p);color:white;border:none;border-radius:10px;padding:11px;font-weight:800;font-size:13px;cursor:pointer">🖼️ Choisir ma capture d'écran</button>
       <div id="preuvePaiementStatus" style="display:none;margin-top:8px;font-size:11px;font-weight:700;text-align:center"></div>
