@@ -40,12 +40,14 @@
 .clt-score small{display:block;font-size:9px;font-weight:600;color:var(--t3)}
 .clt-grp-head{background:linear-gradient(135deg,#7c3aed,var(--p));color:#fff;border-radius:10px;padding:7px 12px;font-weight:900;font-size:11px;margin:10px 0 6px;display:flex;align-items:center;justify-content:space-between}
 </style>
-<!-- PDF.js — rendu PDF natif multiplateforme -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script>
-  if (typeof pdfjsLib !== "undefined") {
-    pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-  }
+<!-- PDF.js — rendu PDF natif multiplateforme (différé pour ne pas bloquer le premier affichage) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" defer></script>
+<script defer>
+  window.addEventListener("load", function() {
+    if (typeof pdfjsLib !== "undefined") {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    }
+  });
 </script>
 <!-- libsql remplacé par API REST -->
 <style>
