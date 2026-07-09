@@ -10746,6 +10746,16 @@ document.addEventListener("DOMContentLoaded", () => {
   onboardingDemarrerSiPremierLancement();
 });
 
+// Exposition sur window : requis car main.js est chargé en type="module",
+// les fonctions ne sont pas globales par défaut — les onclick="..." du HTML
+// (boutons Suivant/Passer de l'onboarding) en ont besoin pour fonctionner.
+window.onboardingSuivant = onboardingSuivant;
+window.onboardingFermer = onboardingFermer;
+window.onboardingDemarrerSiPremierLancement = onboardingDemarrerSiPremierLancement;
+window.dismissPremHint = dismissPremHint;
+window.positionPremHint = positionPremHint;
+window.updatePremHint = updatePremHint;
+
 // ========== VIDÉO-CONFÉRENCE (Jitsi Meet) ==========
 const VISIO_JITSI_BASE = "https://meet.jit.si/";
 const VISIO_RECENT_KEY = "learnupr_visio_recentes";
