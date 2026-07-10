@@ -857,7 +857,7 @@ select.input{cursor:pointer;}
 
   <div class="scroll">
     <!-- ACCUEIL -->
-    <div id="t-accueil" style="display: none;">
+    <div id="t-accueil" style="display: block;">
       <div class="stats">
         <div class="sc"><div>📝</div><div class="snum" id="stat-matieres">16</div><div class="slbl">Matières</div></div>
         <div class="sc"><div>🏆</div><div class="snum" id="stat-examens">1</div><div class="slbl">Examens</div></div>
@@ -1355,7 +1355,7 @@ select.input{cursor:pointer;}
     </div>
 
     <!-- PROFIL -->
-    <div id="t-profil" style="display: block;">
+    <div id="t-profil" style="display: none;">
       <div class="phdr">
         <div class="pav">👤</div>
         <div class="pnm" id="profilNom">674106410</div>
@@ -1555,7 +1555,7 @@ select.input{cursor:pointer;}
   <!-- BOTTOM NAV -->
   <div class="bnav" role="navigation" aria-label="Navigation principale">
     <button class="nbtn" data-tab="accueil" onclick="showTab('accueil')" aria-label="Accueil">
-      <div class="nico">🏠</div><div class="nlbl off">Accueil</div>
+      <div class="nico on">🏠</div><div class="nlbl on">Accueil</div>
     </button>
     <button class="nbtn" onclick="ouvrirPlusPanel()" aria-label="Plus de fonctionnalités">
       <div class="nico nico-plus" style="color:white;font-weight:900">✨<span class="nico-plus-star">⭐</span></div>
@@ -1567,7 +1567,7 @@ select.input{cursor:pointer;}
       <div class="nav-notif-dot" id="navNotifDot" aria-hidden="true"></div>
     </button>
     <button class="nbtn" data-tab="profil" onclick="showTab('profil')" aria-label="Mon profil">
-      <div class="nico on">👤</div><div class="nlbl on">Profil</div>
+      <div class="nico">👤</div><div class="nlbl off">Profil</div>
     </button>
   </div>
 
@@ -2602,6 +2602,21 @@ select.input{cursor:pointer;}
     <div style="display:flex;gap:8px">
       <button id="onbSkipBtn" onclick="onboardingFermer()" style="flex:1;background:none;border:none;color:var(--t3);font-size:12px;font-weight:700;padding:12px;cursor:pointer">Passer</button>
       <button id="onbNextBtn" onclick="onboardingSuivant()" style="flex:2;background:linear-gradient(135deg,var(--p),var(--p2));border:none;border-radius:12px;padding:12px;color:white;font-weight:800;font-size:13px;cursor:pointer">Suivant</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== MODAL NUMÉRO À L'ENTRÉE ========== -->
+<div class="ovl" id="entryPhoneModal" style="z-index:9998">
+  <div class="modal" style="text-align:center">
+    <div class="mhdle"></div>
+    <div style="font-size:52px;margin-bottom:10px">📱</div>
+    <div class="mtit">Entre ton numéro</div>
+    <div class="msub" style="line-height:1.7;margin-bottom:14px">Nécessaire pour créer ton compte, sauvegarder ta progression et activer ton Premium si tu es abonné.</div>
+    <input type="tel" class="login-input" id="entryPhoneInput" placeholder="Numéro WhatsApp (9 chiffres, sans 237)" maxlength="9" inputmode="numeric" oninput="this.value=this.value.replace(/\D/g,'').slice(0,9)" style="margin-bottom:14px">
+    <div style="display:flex;gap:8px">
+      <button onclick="entryPhoneSkip()" style="flex:1;background:none;border:none;color:var(--t3);font-size:12px;font-weight:700;padding:12px;cursor:pointer">Plus tard</button>
+      <button onclick="entryPhoneSubmit()" style="flex:2;background:linear-gradient(135deg,var(--p),var(--p2));border:none;border-radius:12px;padding:12px;color:white;font-weight:800;font-size:13px;cursor:pointer">✅ Continuer</button>
     </div>
   </div>
 </div>
