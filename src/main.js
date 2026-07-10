@@ -10739,11 +10739,46 @@ function onboardingFermer() {
   try { localStorage.setItem(ONBOARDING_FLAG, "1"); } catch(e) {}
   const overlay = document.getElementById("onboardingOverlay");
   if (overlay) overlay.classList.remove("show");
+  _verifierEntreeNumero();
+}
+
+// ========== MODAL NUMÉRO À L'ENTRÉE ==========
+function _verifierEntreeNumero() {
+  let dejaConnu = false;
+  try { dejaConnu = !!localStorage.getItem("userPhone"); } catch(e) { return; }
+  if (dejaConnu) return;
+  const m = document.getElementById("entryPhoneModal");
+  if (m) m.classList.add("show");
+}
+async function entryPhoneSubmit() {
+  const val = document.getElementById("entryPhoneInput").value.trim();
+  if (!val || !/^[0-9]{9}$/.test(val)) {
+    showToast("❌ Numéro invalide (9 chiffres)", "error");
+    return;
+  }
+  const li = document.getElementById("loginPhone");
+  if (li) li.value = val;
+  await loginUser();
+  if (localStorage.getItem("userPhone") === val) {
+    const m = document.getElementById("entryPhoneModal");
+    if (m) m.classList.remove("show");
+    updateProfilStatus();
+  }
+}
+function entryPhoneSkip() {
+  const m = document.getElementById("entryPhoneModal");
+  if (m) m.classList.remove("show");
 }
 
 document.addEventListener("DOMContentLoaded", () => {
   _onbAfficherSlide(0);
-  onboardingDemarrerSiPremierLancement();
+  let onboardingDejaVu = false;
+  try { onboardingDejaVu = !!localStorage.getItem(ONBOARDING_FLAG); } catch(e) {}
+  if (!onboardingDejaVu) {
+    onboardingDemarrerSiPremierLancement();
+  } else {
+    _verifierEntreeNumero();
+  }
 });
 
 // Exposition sur window : requis car main.js est chargé en type="module",
@@ -10755,6 +10790,8 @@ window.onboardingDemarrerSiPremierLancement = onboardingDemarrerSiPremierLanceme
 window.dismissPremHint = dismissPremHint;
 window.positionPremHint = positionPremHint;
 window.updatePremHint = updatePremHint;
+window.entryPhoneSubmit = entryPhoneSubmit;
+window.entryPhoneSkip = entryPhoneSkip;
 
 // ========== VIDÉO-CONFÉRENCE (Jitsi Meet) ==========
 const VISIO_JITSI_BASE = "https://meet.jit.si/";
