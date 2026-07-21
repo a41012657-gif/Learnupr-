@@ -163,6 +163,19 @@ function _remplirEntete(c) {
 
 // Construire le HTML du contenu selon le type de fichier
 function _buildContenuHtml(c) {
+  // ── Verrou Premium (2e couche) : même si _openContenu() a déjà vérifié
+  // l'accès avant d'appeler cette fonction, on revérifie ici pour que
+  // le message "réservé au Premium" s'affiche explicitement au-dessus du
+  // fichier si jamais cette fonction est atteinte par un autre chemin. ──
+  if (c.premium && typeof checkPremium === "function" && !checkPremium()) {
+    return `<div style="text-align:center;padding:28px 16px;background:var(--card);border-radius:16px;border:1.5px solid var(--border)">
+      <div style="font-size:44px;margin-bottom:10px">🔒</div>
+      <div style="font-weight:900;font-size:14px;color:var(--text);margin-bottom:6px">Réservé aux membres Premium</div>
+      <div style="font-size:12px;color:var(--t2);margin-bottom:16px">Ce fichier fait partie du contenu Premium.</div>
+      <button onclick="openPremiumGate('cours')" style="background:linear-gradient(135deg,var(--p),var(--p2));color:white;border:none;border-radius:14px;padding:12px 22px;font-weight:800;font-size:13px;cursor:pointer">⭐ Passer Premium</button>
+    </div>`;
+  }
+
   // ── Auto-extraction de l'URL depuis le champ contenu si fichierUrl est vide ──
   // Patterns : [CLOUD: url], [CLOUD:url], url brute cloudinary
   if (!c.fichierUrl && c.contenu) {

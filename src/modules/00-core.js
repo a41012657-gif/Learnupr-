@@ -2044,6 +2044,18 @@ async function loginUser() {
     }
   }
 
+  // ── Fix : purger le cache Premium hérité si on se connecte avec un AUTRE
+  // numéro que la session précédente sur cet appareil. Sans ça, un nouvel
+  // inscrit récupérait le "isPremium=true" laissé en localStorage par le
+  // compte précédemment connecté sur ce même navigateur (ex: un admin/testeur),
+  // car syncSessionDepuisTurso() ne l'écrase pas volontairement en mode
+  // tolérance hors-ligne.
+  const previousPhone = localStorage.getItem("userPhone");
+  if (previousPhone && previousPhone !== phone) {
+    isPremium = false;
+    localStorage.removeItem("isPremium");
+  }
+
   // Sauvegarder localement
   localStorage.setItem("userPhone", phone);
   localStorage.setItem("_lu_fp", deviceId);
@@ -2076,6 +2088,24 @@ async function loginUser() {
   syncProgressionDepuisTurso();
   addNotification("🎉 Connexion réussie", `Bienvenue ! Rôle : ${roleText}`, "success");
   showToast(`✅ Connecté — ${roleText}`, "success");
+}
+
+// ── Déconnexion : efface la session locale (le compte reste sur Turso) ──
+function deconnexionUser() {
+  if (!confirm("Se déconnecter de ce compte ?")) return;
+  localStorage.removeItem("userPhone");
+  localStorage.removeItem("userPseudo");
+  localStorage.removeItem("userRole");
+  localStorage.removeItem("isPremium");
+  isPremium = false;
+  const loginPhone = document.getElementById("loginPhone");
+  if (loginPhone) loginPhone.value = "";
+  const roleWrap = document.getElementById("roleDisplayWrapper");
+  if (roleWrap) roleWrap.style.display = "none";
+  const nom = document.getElementById("profilNom");
+  if (nom) nom.textContent = "Non connecté";
+  updateProfilStatus();
+  showToast("👋 Déconnecté", "info");
 }
 
 // ── Afficher modal de blocage appareil non autorisé ──
@@ -2180,6 +2210,7 @@ function updateProfilStatus() {
   if (!st) return;
 
   const phone = localStorage.getItem("userPhone");
+  const logoutBtn = document.getElementById("logoutBtn");
   if (phone) {
     const pseudo = localStorage.getItem("userPseudo") || phone;
     document.getElementById("profilNom").textContent = pseudo;
@@ -2189,6 +2220,9 @@ function updateProfilStatus() {
     const isMod = MODERATORS_PHONES.includes(phone) || cachedRole === "moderator";
     const roleText = cachedRole === "admin" ? "⭐ ADMINISTRATEUR" : (isMod ? "🛡️ MODÉRATEUR" : (isPremium ? "⭐ PREMIUM" : "👩‍🎓 ÉLÈVE"));
     document.getElementById("roleDisplay").textContent = roleText;
+    if (logoutBtn) logoutBtn.style.display = "block";
+  } else if (logoutBtn) {
+    logoutBtn.style.display = "none";
   }
 
   if (isPremium) {
