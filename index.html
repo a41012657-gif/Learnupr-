@@ -30,14 +30,6 @@
 <style>@media print { body { display: none !important; } }</style><style>@media print { body { display: none !important; } }</style><link rel="stylesheet" href="./src/style.css">
 </head>
 <body>
-<script>
-window.addEventListener('error', function(e) {
-  var d = document.createElement('div');
-  d.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;padding:10px;z-index:99999;font-size:12px;white-space:pre-wrap';
-  d.textContent = '❌ ERREUR JS: ' + e.message + ' — Fichier: ' + e.filename + ' — Ligne: ' + e.lineno;
-  document.body.prepend(d);
-}, true);
-</script>
 <!-- 🏷️ MARQUEUR DE VERSION — pour vérifier facilement quelle version du fichier est chargée.
      Change à chaque nouvelle version envoyée par Claude. Visible en haut de l'écran quelques secondes au chargement. -->
 <div id="buildVersionBadge" style="position:fixed;top:0;left:0;right:0;z-index:999999;background:#111827;color:#4ADE80;font-family:monospace;font-size:11px;text-align:center;padding:4px;font-weight:700">
@@ -664,7 +656,8 @@ window.addEventListener('error', function(e) {
 
     <!-- PROFIL -->
     <div id="t-profil" style="display: none;">
-      <div class="phdr">
+      <div class="phdr" style="position:relative">
+        <button id="logoutBtn" onclick="deconnexionUser()" style="display:none;position:absolute;top:12px;right:12px;background:rgba(0,0,0,0.25);color:#fff;border:1px solid rgba(255,255,255,0.35);border-radius:10px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer">🚪 Déconnexion</button>
         <div class="pav">👤</div>
         <div class="pnm" id="profilNom">674106410</div>
         <div class="pst" id="pstatus" style="color: var(--yellow);">⭐ Compte Premium</div>
