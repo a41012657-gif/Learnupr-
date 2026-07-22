@@ -278,6 +278,12 @@ function lancerQuiz() {
   });
   quizState.label = [classe, mat ? (NOMS_MATIERES[mat]||mat) : "", chapitre].filter(Boolean).join(" · ") || "Général";
 
+  // Fix : afficher classe/matière/chapitre à l'élève pendant le quiz (badge au-dessus
+  // de la barre de progression) — ce label existait déjà en interne mais n'était
+  // jamais montré à l'écran, donc le chapitre semblait "disparaître" après import.
+  const labelBadge = document.getElementById("quiz-label-badge");
+  if (labelBadge) labelBadge.textContent = "📘 " + quizState.label;
+
   document.getElementById("quiz-home").style.display = "none";
   document.getElementById("quiz-result").style.display = "none";
   document.getElementById("quiz-game").style.display = "block";

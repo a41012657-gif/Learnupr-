@@ -1733,10 +1733,19 @@ async function soumettreQuestion() {
   const pseudo = localStorage.getItem("userPseudo") || phone || "Élève anonyme";
   const now = Date.now();
 
+  // Fix forum : on utilise la classe de l'onglet forum actuellement sélectionné
+  // (forumClasseActive) si elle est précise, sinon la classe réelle de l'élève
+  // (userClasse), plutôt que "activeClasse" qui reflète la navigation générale
+  // (dernière matière/classe parcourue) et peut différer de l'onglet forum affiché —
+  // ce qui faisait "disparaître" les nouvelles questions postées.
+  const classeForum = (forumClasseActive && forumClasseActive !== "tous")
+    ? forumClasseActive
+    : (localStorage.getItem("userClasse") || activeClasse);
+
   const question = {
     id: now,
     texte, matiere, tags,
-    classe: activeClasse,
+    classe: classeForum,
     auteur: phone,
     pseudo,
     date: now,
@@ -1756,7 +1765,7 @@ async function soumettreQuestion() {
       await turso.execute({
         sql: `INSERT OR IGNORE INTO forum_questions (id, texte, matiere, classe, auteur, pseudo, tags, date, likes, nb_reponses, resolu)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0)`,
-        args: [now, texte, matiere, activeClasse, phone, pseudo, tags.join(","), now]
+        args: [now, texte, matiere, classeForum, phone, pseudo, tags.join(","), now]
       });
     } catch(e) {}
   }
