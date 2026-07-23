@@ -1986,6 +1986,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
 // ========== RÉPARATION FICHIERS SANS URL ==========
 async function scanFichiersManquants() {
+  const caller = localStorage.getItem("userPhone") || "";
+  const isAdmin = await isAdminPhone(caller);
+  if (!isAdmin) { showToast("⛔ Accès réservé à l'administrateur", "error"); return; }
   const resultsEl = document.getElementById("scan-results");
   if (!resultsEl) return;
   resultsEl.style.display = "block";

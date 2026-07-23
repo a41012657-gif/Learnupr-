@@ -1452,6 +1452,9 @@ function esc(str) {
 
 // ── Corriger automatiquement toutes les URLs image/upload → raw/upload dans Turso ──
 async function corrigerUrlsCloudinary() {
+  const caller = localStorage.getItem("userPhone") || "";
+  const isAdmin = await isAdminPhone(caller);
+  if (!isAdmin) { showToast("⛔ Accès réservé à l'administrateur", "error"); return; }
   if (!confirm("Corriger automatiquement toutes les URLs PDF dans Turso ?\n\nimage/upload → raw/upload\n\nContinuer ?")) return;
 
   showToast("⏳ Scan en cours...", "info");
@@ -1529,6 +1532,9 @@ async function corrigerUrlsCloudinary() {
 
 // ── Voir les URLs Cloudinary + détecter 404 + republier ──
 async function voirUrlsFichiers() {
+  const caller = localStorage.getItem("userPhone") || "";
+  const isAdmin = await isAdminPhone(caller);
+  if (!isAdmin) { showToast("⛔ Accès réservé à l'administrateur", "error"); return; }
   showToast("⏳ Chargement des fichiers...", "info");
   let fichiers = [];
 
@@ -2244,6 +2250,9 @@ function updateProfilStatus() {
 // ========== ADMIN — Vérification via Turso uniquement (aucun numéro en dur) ==========
 // ========== CONFIG SÉCURISÉE — FONCTIONS ==========
 async function ouvrirConfigSecurisee() {
+  const caller = localStorage.getItem("userPhone") || "";
+  const isAdmin = await isAdminPhone(caller);
+  if (!isAdmin) { showToast("⛔ Accès réservé à l'administrateur", "error"); return; }
   // Pré-remplir avec les valeurs déchiffrées actuelles (masquées)
   const cfg = await loadSecureConfig() || {};
   // Si Turso est déjà connecté, ses valeurs priment pour le numéro de
@@ -2645,6 +2654,9 @@ function verrouillerAdmin() {
 
 // ========== DIAGNOSTIC ADMIN : Tester Cloudinary & Turso ==========
 async function testerConnexions() {
+  const caller = localStorage.getItem("userPhone") || "";
+  const isAdmin = await isAdminPhone(caller);
+  if (!isAdmin) { showToast("⛔ Accès réservé à l'administrateur", "error"); return; }
   showToast("🔌 Test des connexions en cours...", "info");
   const rapport = { cloudinary: null, turso: null };
 
