@@ -472,6 +472,11 @@ async function importerCSVQuiz(input) {
     let imported = 0, errors = [];
     const batchSource = (file.name || "import").replace(/\.csv$/i, "");
     const newlyAdded = [];
+    // Mémorise le chapitre courant pour la détection automatique en cascade
+    // (voir resoudreChapitreCSV dans 00-core.js) : une fois un chapitre connu
+    // (ligne d'en-tête "#...", colonne "chapitre" remplie, ou détecté dans la
+    // question), il est réutilisé pour les lignes suivantes qui n'en ont pas.
+    const refChapitreCourant = { valeur: "" };
 
     // Si un en-tête a été détecté, vérifier que tous les champs obligatoires sont présents (une seule fois, pas par ligne)
     if (colMap) {
@@ -485,6 +490,13 @@ async function importerCSVQuiz(input) {
 
     // ── ÉTAPE A : Parsing + sauvegarde LOCALE instantanée (pas d'attente réseau) ──
     for (let i = startLine; i < lines.length; i++) {
+      // Ligne d'en-tête de section (ex: "#Chapitre 3 — Les fonctions") : fixe le
+      // chapitre courant pour toutes les lignes suivantes, sans créer de question.
+      if (typeof estLigneEnteteChapitreCSV === "function" && estLigneEnteteChapitreCSV(lines[i])) {
+        refChapitreCourant.valeur = extraireChapitreDeLEntete(lines[i]);
+        continue;
+      }
+
       const parts = lines[i].split(sep).map(p => p.trim().replace(/^["']|["']$/g, ""));
 
       let classe, matiere, chapitre, question, choix1, choix2, choix3, choix4, reponseRaw, explicationRaw;
@@ -520,7 +532,6 @@ async function importerCSVQuiz(input) {
         const matiereNorm = normaliserMatiereCSV(matiere);
         if (matiereNorm) matiere = matiereNorm;
       }
-      if (forcedChapitre) chapitre = forcedChapitre;
       // Accepte 0-3 OU les lettres A/B/C/D (majuscule ou minuscule)
       const reponse = normaliserReponseCSV(reponseRaw);
 
@@ -535,11 +546,18 @@ async function importerCSVQuiz(input) {
       // partagée entre toutes les classes — pas de duplication, pas de copie multiple.
       const classesCibles = [classe, ...classesSuppCsv.filter(c => c !== classe)];
 
+      // Détection automatique du chapitre : forcé (UI) > colonne du CSV >
+      // détecté dans le texte de la question > hérité de la ligne précédente
+      // (utile avec les lignes d'en-tête "#Chapitre…") > "Général" par défaut.
+      const chapitreResolu = typeof resoudreChapitreCSV === "function"
+        ? resoudreChapitreCSV(forcedChapitre, chapitre, question, refChapitreCourant)
+        : (forcedChapitre || chapitre || "Général");
+
       const newQ = {
         id: Date.now() + i + Math.floor(Math.random()*100000),
         classe: classesCibles.map(c => c.trim()).join(","),
         matiere: matiere.trim(),
-        chapitre: chapitre.trim() || "Général",
+        chapitre: chapitreResolu,
         q: question.trim(),
         c: [choix1.trim(), choix2.trim(), choix3.trim(), choix4.trim()],
         r: reponse,
@@ -615,18 +633,25 @@ async function importerCSVQuiz(input) {
 }
 
 function telechargerExempleCSV() {
+  // Exemple montrant : plusieurs classes ET plusieurs chapitres dans le même fichier,
+  // ainsi que les lignes d'en-tête "#Chapitre…" qui fixent automatiquement le chapitre
+  // de toutes les lignes suivantes (jusqu'au prochain "#..."), sans avoir à le répéter.
   const exemple = `classe;matiere;chapitre;question;choix1;choix2;choix3;choix4;reponse;explication
-3ème;math;Chapitre 5 — Arithmétique;Combien font 7 × 8 ?;54;56;58;52;1;7 × 8 = 56 car 7 × 8 = 7 × (4+4) = 28+28 = 56
-3ème;math;Chapitre 5 — Arithmétique;Quel est le PGCD de 12 et 18 ?;2;4;6;9;2;PGCD(12,18) = 6 car 12=2×6 et 18=3×6
-3ème;français;Chapitre 3 — Grammaire;Nature de "rapidement" dans "il court rapidement" ?;Adjectif;Adverbe;Verbe;Nom;1;Un mot en -ment qui modifie un verbe est un adverbe
-Tle C;physique;Chapitre 1 — Mécanique;Quelle est la formule de la force ?;F=ma;F=mv;F=Pa;F=mc²;0;2ème loi de Newton : Force = masse × accélération`;
+#Chapitre 5 — Arithmétique
+3ème;math;;Combien font 7 × 8 ?;54;56;58;52;1;7 × 8 = 56 car 7 × 8 = 7 × (4+4) = 28+28 = 56
+3ème;math;;Quel est le PGCD de 12 et 18 ?;2;4;6;9;2;PGCD(12,18) = 6 car 12=2×6 et 18=3×6
+#Chapitre 3 — Grammaire
+3ème;français;;Nature de "rapidement" dans "il court rapidement" ?;Adjectif;Adverbe;Verbe;Nom;1;Un mot en -ment qui modifie un verbe est un adverbe
+#Chapitre 1 — Mécanique
+Tle_C;physique;;Quelle est la formule de la force ?;F=ma;F=mv;F=Pa;F=mc²;0;2ème loi de Newton : Force = masse × accélération
+Tle_D;physique;;Quelle est l'unité de la force ?;Joule;Newton;Watt;Pascal;1;L'unité de force est le Newton (N)`;
   const blob = new Blob([exemple], { type: "text/csv;charset=utf-8" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = "exemple_quiz_learnup.csv";
   document.body.appendChild(a); a.click();
   document.body.removeChild(a);
-  showToast("📋 Exemple téléchargé !", "success");
+  showToast("📋 Exemple téléchargé (plusieurs classes/chapitres dans un seul fichier) !", "success");
 }
 
 

@@ -539,6 +539,64 @@ function normaliserReponseCSV(raw) {
   return isNaN(n) ? NaN : n;
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// DÉTECTION AUTOMATIQUE DU CHAPITRE — utilisée par l'import CSV des quiz ET
+// des vidéos, pour permettre de mettre plusieurs chapitres (et plusieurs
+// classes) dans un seul et même fichier, sans avoir à répéter le chapitre
+// sur chaque ligne.
+//
+// Deux mécanismes complémentaires (voir _lireChapitreCSV ci-dessous) :
+//  1) "Lignes d'en-tête de section" : une ligne du CSV qui commence par "#"
+//     (ex: "#Chapitre 3 — Les fonctions") fixe le chapitre courant pour
+//     toutes les lignes suivantes, jusqu'à la prochaine ligne "#...".
+//  2) Détection dans le texte : si aucun chapitre n'est fourni, l'app
+//     cherche une mention du type "Chapitre 3", "Chap. 4", "Leçon 2",
+//     "Thème 5", "Partie 1"... directement dans la question/le titre.
+// Si rien n'est trouvé, le dernier chapitre connu (venant d'une ligne
+// précédente) est réutilisé ; sinon "Général".
+// ══════════════════════════════════════════════════════════════════════════
+const RE_CHAPITRE_AUTO = /\b(chapitre|chap\.?|le[çc]on|th[eè]me|partie|unit[eé])\s*n?°?\s*(\d+)\s*[:\-–—.]?\s*(.*)$/i;
+
+// Repère une éventuelle mention de chapitre dans un texte libre (question, titre…)
+// et renvoie un libellé normalisé ("Chapitre 3" ou "Chapitre 3 — Les fonctions"),
+// ou "" si rien n'est détecté.
+function detecterChapitreAuto(texte) {
+  const s = (texte || "").toString().trim();
+  if (!s) return "";
+  const m = s.match(RE_CHAPITRE_AUTO);
+  if (!m) return "";
+  const numero = m[2];
+  const titre = (m[3] || "").trim().replace(/[."\s]+$/,"");
+  return titre ? `Chapitre ${numero} — ${titre}` : `Chapitre ${numero}`;
+}
+
+// Une "ligne d'en-tête de section" est une ligne brute du CSV qui commence par
+// un ou plusieurs "#" (comme un titre Markdown), ex : "#Chapitre 2 — Les suites".
+// Elle sert uniquement à fixer le chapitre courant, elle n'est pas importée
+// comme question/vidéo.
+function estLigneEnteteChapitreCSV(ligneBrute) {
+  return /^#+\s*\S/.test((ligneBrute || "").toString().trim());
+}
+function extraireChapitreDeLEntete(ligneBrute) {
+  return (ligneBrute || "").toString().trim().replace(/^#+\s*/, "").trim();
+}
+
+// Résout le chapitre à utiliser pour une ligne CSV donnée, avec détection
+// automatique en cascade :
+//   chapitre forcé (UI) > colonne "chapitre" de la ligne > détecté dans le
+//   texte (question/titre) > dernier chapitre connu (hérité) > "Général".
+// `refChapitreCourant` est un objet { valeur } utilisé comme référence
+// mutable pour mémoriser/propager le chapitre entre les lignes successives.
+function resoudreChapitreCSV(chapitreForce, chapitreColonne, texteLibre, refChapitreCourant) {
+  if (chapitreForce) { refChapitreCourant.valeur = chapitreForce; return chapitreForce; }
+  const fromCol = (chapitreColonne || "").toString().trim();
+  if (fromCol) { refChapitreCourant.valeur = fromCol; return fromCol; }
+  const detecte = detecterChapitreAuto(texteLibre);
+  if (detecte) { refChapitreCourant.valeur = detecte; return detecte; }
+  if (refChapitreCourant.valeur) return refChapitreCourant.valeur;
+  return "Général";
+}
+
 // Une question quiz peut être partagée entre plusieurs classes : son champ "classe"
 // est alors une liste séparée par des virgules, ex: "1ère_C,1ère_D".
 function _quizClasseMatch(qClasse, targetClasse) {
@@ -727,6 +785,8 @@ async function initTurso() {
     )`, args: [] });
     try { await turso.execute({ sql: "ALTER TABLE quiz_questions ADD COLUMN source TEXT DEFAULT ''", args: [] }); } catch(e) {}
     try { await turso.execute({ sql: "ALTER TABLE contenu ADD COLUMN description TEXT DEFAULT ''", args: [] }); } catch(e) {}
+    // Migration : chapitre des vidéos (permet de regrouper les vidéos par chapitre, comme les cours)
+    try { await turso.execute({ sql: "ALTER TABLE contenu ADD COLUMN chapitre TEXT DEFAULT ''", args: [] }); } catch(e) {}
     await turso.execute({ sql: `CREATE TABLE IF NOT EXISTS signalements (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       contenu_id INTEGER, type_signal TEXT, message TEXT,
@@ -785,7 +845,7 @@ async function syncContenuDepuisTurso() {
   if (!turso) return;
   try {
     const res = await turso.execute({
-      sql: "SELECT id, type, type_fichier, mat, classe, titre, numero, contenu, fichier_url, fichier_type, fichier_nom, lycee, premium, auteur, date, description FROM contenu ORDER BY date DESC LIMIT 200",
+      sql: "SELECT id, type, type_fichier, mat, classe, titre, numero, contenu, fichier_url, fichier_type, fichier_nom, lycee, premium, auteur, date, description, chapitre FROM contenu ORDER BY date DESC LIMIT 200",
       args: []
     });
     if (res.rows && res.rows.length > 0) {
@@ -812,7 +872,8 @@ async function syncContenuDepuisTurso() {
           premium:     Number(r.premium ?? r[12]) === 1,
           auteur:      r.auteur       || r[13],
           date:        r.date         || r[14],
-          description: r.description  || _loc.description || ""
+          description: r.description  || _loc.description || "",
+          chapitre:    r.chapitre     || r[15] || _loc.chapitre || ""
         };
       });
       // Fusion (pas écrasement) : on garde aussi les entrées locales qui n'existent
@@ -3449,33 +3510,51 @@ async function renderContent() {
       const col = COLORS[mat] || "var(--p)";
       const matLabel = mat.replace(/_/g, " ");
       const matCap = NOMS_MATIERES[mat] || matLabel.charAt(0).toUpperCase() + matLabel.slice(1);
+
+      // Regrouper les vidéos par chapitre (rempli automatiquement à l'import CSV,
+      // ou "Général" si aucun chapitre détecté/renseigné) — même logique que pour les cours.
+      const parChapitre = {};
+      for (const v of videos) {
+        const ch = v.chapitre || "Général";
+        (parChapitre[ch] = parChapitre[ch] || []).push(v);
+      }
+      const chapitres = Object.keys(parChapitre);
+      const plusieursChapitres = chapitres.length > 1 || (chapitres.length === 1 && chapitres[0] !== "Général");
+
       html += `<div class="msec fade-in">
         <div class="mhead" style="border-left:4px solid ${col}">
           <div class="mico" style="background:${col}20">${emo}</div>
           <div class="mnom" style="color:${col}">${matCap}</div>
           <div class="mcnt">${videos.length} vidéo(s)</div>
-        </div>
-        <div class="chapitre-list">`;
-      for (const v of videos) {
-        const lock = v.premium && !isPremium;
-        const safeTitle = (v.titre || "").replace(/'/g, "\\'");
-        const vBadge = v.premium
-          ? `<span style="font-size:9px;background:var(--gold2);color:white;padding:1px 6px;border-radius:6px;white-space:nowrap">⭐ Premium</span>`
-          : `<span style="font-size:9px;background:rgba(34,197,94,0.15);color:#22c55e;padding:1px 6px;border-radius:6px;white-space:nowrap;border:1px solid rgba(34,197,94,0.3)">🆓 Gratuit</span>`;
-        html += `<div class="resource-item" onclick="${lock ? `openPremiumGate('video')` : `viewContenuPublie('${String(v.id)}')`}">
-          <div class="chapitre-num" style="color:${col}">🎬</div>
-          <div style="flex:1">
-            <div class="chapitre-titre">${v.titre}</div>
-            <div style="font-size:9px;color:var(--t3);margin-top:2px;display:flex;align-items:center;gap:4px">▶️ Vidéo ${vBadge}</div>
-            ${v.description ? `<div style="font-size:10px;color:var(--t2);margin-top:3px;line-height:1.4">${v.description}</div>` : ""}
-          </div>
-          <div style="display:flex;align-items:center;gap:6px">
-            <span>${lock ? "🔒" : "▶️"}</span>
-            <button class="res-share" onclick="event.stopPropagation();shareResource('${safeTitle}',window.location.href)" title="Partager">📤</button>
-          </div>
         </div>`;
+
+      for (const ch of chapitres) {
+        if (plusieursChapitres) {
+          html += `<div style="font-size:11px;font-weight:800;color:${col};padding:8px 4px 4px 4px">📖 ${esc ? esc(ch) : ch}</div>`;
+        }
+        html += `<div class="chapitre-list">`;
+        for (const v of parChapitre[ch]) {
+          const lock = v.premium && !isPremium;
+          const safeTitle = (v.titre || "").replace(/'/g, "\\'");
+          const vBadge = v.premium
+            ? `<span style="font-size:9px;background:var(--gold2);color:white;padding:1px 6px;border-radius:6px;white-space:nowrap">⭐ Premium</span>`
+            : `<span style="font-size:9px;background:rgba(34,197,94,0.15);color:#22c55e;padding:1px 6px;border-radius:6px;white-space:nowrap;border:1px solid rgba(34,197,94,0.3)">🆓 Gratuit</span>`;
+          html += `<div class="resource-item" onclick="${lock ? `openPremiumGate('video')` : `viewContenuPublie('${String(v.id)}')`}">
+            <div class="chapitre-num" style="color:${col}">🎬</div>
+            <div style="flex:1">
+              <div class="chapitre-titre">${v.titre}</div>
+              <div style="font-size:9px;color:var(--t3);margin-top:2px;display:flex;align-items:center;gap:4px">▶️ Vidéo ${vBadge}</div>
+              ${v.description ? `<div style="font-size:10px;color:var(--t2);margin-top:3px;line-height:1.4">${v.description}</div>` : ""}
+            </div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <span>${lock ? "🔒" : "▶️"}</span>
+              <button class="res-share" onclick="event.stopPropagation();shareResource('${safeTitle}',window.location.href)" title="Partager">📤</button>
+            </div>
+          </div>`;
+        }
+        html += `</div>`;
       }
-      html += `</div></div>`;
+      html += `</div>`;
     }
 
     if (matsAvecVideos.length === 0) {

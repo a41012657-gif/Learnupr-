@@ -1304,13 +1304,15 @@ function ouvrirImportCSVVideo() {
         <div style="background:rgba(8,145,178,0.08);border:1px solid rgba(8,145,178,0.25);border-radius:12px;padding:12px;margin-bottom:14px">
           <div style="font-size:10px;font-weight:800;color:#0891b2;margin-bottom:6px">📄 FORMAT DU FICHIER CSV</div>
           <div style="font-size:10px;color:var(--t2);line-height:1.8;font-family:monospace">
-            titre,url,classe,matiere,premium<br>
-            <span style="color:var(--t3)">Cours de dérivation,https://youtu.be/abc123,Tle_C,math,non</span><br>
-            <span style="color:var(--t3)">SVT Génétique,https://youtu.be/xyz789,1ère_D,svt,oui</span><br>
-            <span style="color:var(--t3)">Physique Ondes,https://youtube.com/watch?v=def456,Tle_D,physique,non</span>
+            titre,url,classe,matiere,chapitre,premium<br>
+            <span style="color:var(--t3)">Cours de dérivation,https://youtu.be/abc123,Tle_C,math,Chapitre 2 — Dérivées,non</span><br>
+            <span style="color:var(--t3)">SVT Génétique,https://youtu.be/xyz789,1ère_D,svt,Chapitre 1 — Génétique,oui</span><br>
+            <span style="color:var(--t3)">Physique Ondes,https://youtube.com/watch?v=def456,Tle_D|Tle_C,physique,,non</span>
           </div>
-          <div style="font-size:9px;color:var(--t3);margin-top:6px">
-            ℹ️ Séparateur : virgule ou point-virgule · Première ligne = en-têtes (ignorée) · premium : oui/non ou 1/0
+          <div style="font-size:9px;color:var(--t3);margin-top:6px;line-height:1.6">
+            ℹ️ Séparateur : virgule ou point-virgule · Première ligne = en-têtes (ignorée) · premium : oui/non ou 1/0<br>
+            📚 <b>Plusieurs classes en une ligne</b> : sépare-les par <code>|</code> (ex: <code>Tle_C|Tle_D</code>)<br>
+            🤖 <b>Détection automatique du chapitre</b> : colonne "chapitre" vide → dernier chapitre connu, ou détecté dans le titre. Ajoute une ligne <code>#Chapitre 3 — Titre</code> pour fixer le chapitre des vidéos suivantes.
           </div>
         </div>
 
@@ -1327,6 +1329,7 @@ function ouvrirImportCSVVideo() {
               ${matOptions}
             </select>
           </div>
+          <input type="text" id="csv-default-chapitre" placeholder="Chapitre par défaut (optionnel, ex: Chapitre 1 — Introduction)" style="width:100%;box-sizing:border-box;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--card);font-size:13px;color:var(--text);margin-bottom:8px">
           <div style="display:flex;align-items:center;gap:8px">
             <input type="checkbox" id="csv-default-premium" style="width:18px;height:18px;accent-color:var(--p);cursor:pointer">
             <label for="csv-default-premium" style="font-size:11px;font-weight:700;color:var(--text);cursor:pointer">Premium par défaut</label>
@@ -1400,27 +1403,40 @@ function _csvVideoParseTout(texte) {
   const defClasse = document.getElementById("csv-default-classe")?.value || "";
   const defMat = document.getElementById("csv-default-mat")?.value || "";
   const defPremium = document.getElementById("csv-default-premium")?.checked || false;
+  const defChapitre = document.getElementById("csv-default-chapitre")?.value?.trim() || "";
 
-  const lignes = texte.split(/\r?\n/).map(l => l.trim()).filter(l => l);
-  if (lignes.length < 2) return [];
+  const lignesBrutes = texte.split(/\r?\n/).map(l => l.trim()).filter(l => l);
+  if (lignesBrutes.length < 2) return [];
 
   // Détecter le séparateur (virgule ou point-virgule)
-  const firstLine = lignes[0];
+  const firstLine = lignesBrutes[0];
   const sep = (firstLine.split(";").length > firstLine.split(",").length) ? ";" : ",";
 
   // Lire les en-têtes
-  const headers = _csvParseLigne(lignes[0].toLowerCase(), sep);
+  const headers = _csvParseLigne(lignesBrutes[0].toLowerCase(), sep);
   const idxTitre = headers.findIndex(h => h.includes("titre") || h.includes("title") || h.includes("nom"));
   const idxUrl = headers.findIndex(h => h.includes("url") || h.includes("lien") || h.includes("link") || h.includes("video"));
   const idxClasse = headers.findIndex(h => h.includes("classe") || h.includes("class"));
   const idxMat = headers.findIndex(h => h.includes("mat") || h.includes("mati") || h.includes("subject"));
   const idxPremium = headers.findIndex(h => h.includes("premium") || h.includes("prem") || h.includes("payant"));
+  const idxChapitre = headers.findIndex(h => h.includes("chapitre") || h.includes("chapter") || h.includes("theme") || h.includes("thème") || h.includes("lecon") || h.includes("leçon"));
 
   if (idxUrl < 0) return []; // URL obligatoire
 
+  // Détection automatique du chapitre, avec mémoire du chapitre courant : permet de
+  // mettre plusieurs chapitres (et plusieurs classes) dans le même fichier, soit via
+  // la colonne "chapitre", soit via une ligne d'en-tête "#Chapitre 3 — Titre" qui
+  // fixe le chapitre de toutes les vidéos suivantes jusqu'au prochain "#...".
+  const refChapitreCourant = { valeur: defChapitre };
+
   const videos = [];
-  for (let i = 1; i < lignes.length; i++) {
-    const cols = _csvParseLigne(lignes[i], sep);
+  for (let i = 1; i < lignesBrutes.length; i++) {
+    if (typeof estLigneEnteteChapitreCSV === "function" && estLigneEnteteChapitreCSV(lignesBrutes[i])) {
+      refChapitreCourant.valeur = extraireChapitreDeLEntete(lignesBrutes[i]);
+      continue;
+    }
+
+    const cols = _csvParseLigne(lignesBrutes[i], sep);
     if (!cols.length || !cols[idxUrl]) continue;
 
     const url = cols[idxUrl] || "";
@@ -1431,6 +1447,10 @@ function _csvVideoParseTout(texte) {
     const matRaw = (idxMat >= 0 ? cols[idxMat] : "") || defMat;
     const premiumRaw = (idxPremium >= 0 ? cols[idxPremium] : "");
     const premium = premiumRaw ? ["oui","1","true","yes","premium"].includes(premiumRaw.toLowerCase()) : defPremium;
+    const chapitreColonne = idxChapitre >= 0 ? cols[idxChapitre] : "";
+    const chapitre = typeof resoudreChapitreCSV === "function"
+      ? resoudreChapitreCSV("", chapitreColonne, titre, refChapitreCourant)
+      : (chapitreColonne || defChapitre || "Général");
 
     // Normaliser classe — supporte plusieurs classes séparées par | ou + ou /
     // ex: "1ère_C|1ère_D" → stocké comme "1ère_C,1ère_D" (format interne de l'app)
@@ -1451,7 +1471,7 @@ function _csvVideoParseTout(texte) {
       ? _estDejaPublie({ titre, classe, mat })
       : false;
 
-    videos.push({ titre, url, embedUrl, classe, mat, premium, doublon: dejaPublie, ligne: i + 1 });
+    videos.push({ titre, url, embedUrl, classe, mat, chapitre, premium, doublon: dejaPublie, ligne: i + 1 });
   }
   return videos;
 }
@@ -1489,7 +1509,7 @@ function csvVideoApercu() {
           ${v.titre}${v.doublon ? " <span style='color:var(--red);font-size:9px'>(doublon ignoré)</span>" : ""}
         </div>
         <div style="font-size:9px;color:var(--t3);margin-top:2px">
-          ${(v.classe||"?").replace(/_/g," ")} · ${NOMS_MATIERES[v.mat]||v.mat||"?"}
+          ${(v.classe||"?").replace(/_/g," ")} · ${NOMS_MATIERES[v.mat]||v.mat||"?"}${v.chapitre ? ` · 📖 ${v.chapitre}` : ""}
         </div>
         <div style="font-size:9px;color:#0891b2;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${v.url}</div>
         ${!v.doublon ? `
@@ -1573,6 +1593,7 @@ async function csvVideoPublierTous() {
         mat: v.mat,
         classe: v.classe,
         titre: v.titre,
+        chapitre: v.chapitre || "",
         numero: numero,
         contenu: contenuVideo,
         fichierData: null,
@@ -1595,8 +1616,8 @@ async function csvVideoPublierTous() {
       if (typeof turso !== "undefined" && turso) {
         try {
           await turso.execute({
-            sql: "INSERT INTO contenu (id,type,type_fichier,mat,classe,titre,numero,contenu,fichier_url,fichier_type,fichier_nom,lycee,premium,description,auteur,date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            args: [newEntry.id, "video","video", v.mat, v.classe, v.titre, numero, contenuVideo, v.embedUrl, "video", "", newEntry.lycee, v.premium?1:0, "", newEntry.auteur, newEntry.date]
+            sql: "INSERT INTO contenu (id,type,type_fichier,mat,classe,titre,numero,contenu,fichier_url,fichier_type,fichier_nom,lycee,premium,description,auteur,date,chapitre) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            args: [newEntry.id, "video","video", v.mat, v.classe, v.titre, numero, contenuVideo, v.embedUrl, "video", "", newEntry.lycee, v.premium?1:0, "", newEntry.auteur, newEntry.date, v.chapitre || ""]
           });
         } catch(e) {
           // Si l'insert avec id échoue (ex: conflit ou colonne manquante), on retente sans id
