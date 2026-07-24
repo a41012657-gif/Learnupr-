@@ -1811,7 +1811,9 @@
           <div style="font-weight:900;font-size:14px;color:var(--p);margin-bottom:6px">📂 Importer questions (CSV)</div>
           <div style="font-size:10px;color:var(--t2);margin-bottom:10px;line-height:1.7">
             Colonnes attendues (séparateur <code style="background:var(--bg);padding:1px 4px;border-radius:4px">;</code> ou <code style="background:var(--bg);padding:1px 4px;border-radius:4px">,</code>) :<br>
-            <b>classe ; matiere ; chapitre ; question ; choix1 ; choix2 ; choix3 ; choix4 ; reponse</b> (0=A, 1=B, 2=C, 3=D)
+            <b>classe ; matiere ; chapitre ; question ; choix1 ; choix2 ; choix3 ; choix4 ; reponse</b> (0=A, 1=B, 2=C, 3=D)<br>
+            📚 Tu peux mettre <b>plusieurs classes et plusieurs chapitres dans le même fichier</b> : chaque ligne peut avoir sa propre classe/chapitre.<br>
+            🤖 <b>Détection automatique du chapitre</b> : si la colonne "chapitre" est vide, l'app réutilise le dernier chapitre connu, ou le détecte dans la question ("Chapitre 3…"). Tu peux aussi ajouter une ligne <code style="background:var(--bg);padding:1px 4px;border-radius:4px">#Chapitre 3 — Titre</code> pour fixer le chapitre de toutes les lignes suivantes.
           </div>
 
           <!-- Forcer classe / matière pour tout le fichier (optionnel) -->
