@@ -3173,6 +3173,167 @@ async function activerPremiumPourTous() {
 }
 
 
+// ========== GESTION UTILISATEUR (retirer Premium / Supprimer) ==========
+// Retire le Premium à un numéro donné (remet is_premium à 0 et premium_until à 0).
+async function _retirerPremiumParTelephone(phone) {
+  if (!phone) return { ok: false, message: "Numéro manquant" };
+  if (!turso) return { ok: false, message: "Base non connectée" };
+  try {
+    const res = await turso.execute({ sql: "SELECT phone FROM users WHERE phone = ?", args: [phone] });
+    if (!res.rows.length) return { ok: false, message: "Cet utilisateur n'existe pas dans la base" };
+    await turso.execute({ sql: "UPDATE users SET is_premium = 0, premium_until = 0 WHERE phone = ?", args: [phone] });
+    return { ok: true };
+  } catch(e) {
+    return { ok: false, message: e.message };
+  }
+}
+
+// Supprime définitivement un compte utilisateur (users + device_sessions + fiche
+// contributeur). Ne touche PAS au contenu déjà publié par cet utilisateur (cours,
+// vidéos, quiz) pour ne pas casser l'historique de l'app — seuls le compte et ses
+// accès sont effacés. Un compte "admin" ne peut pas être supprimé depuis cet outil,
+// pour éviter un verrouillage accidentel de l'app.
+async function _supprimerUtilisateurParTelephone(phone) {
+  if (!phone) return { ok: false, message: "Numéro manquant" };
+  if (!turso) return { ok: false, message: "Base non connectée" };
+  try {
+    const res = await turso.execute({ sql: "SELECT phone, role FROM users WHERE phone = ?", args: [phone] });
+    if (!res.rows.length) return { ok: false, message: "Cet utilisateur n'existe pas dans la base" };
+    if (res.rows[0].role === "admin") return { ok: false, message: "Impossible de supprimer un compte administrateur depuis cet outil" };
+    await turso.execute({ sql: "DELETE FROM users WHERE phone = ?", args: [phone] });
+    try { await turso.execute({ sql: "DELETE FROM device_sessions WHERE phone = ?", args: [phone] }); } catch(e) {}
+    try { await turso.execute({ sql: "DELETE FROM utilisateurs WHERE phone = ?", args: [phone] }); } catch(e) {}
+    return { ok: true };
+  } catch(e) {
+    return { ok: false, message: e.message };
+  }
+}
+
+// Modal unique : recherche un utilisateur (select ou numéro manuel), puis choix
+// de l'action — Retirer Premium ou Supprimer le compte (destructif, confirmation requise).
+async function ouvrirGestionUtilisateur() {
+  const caller = localStorage.getItem("userPhone") || "";
+  const isAdmin = await isAdminPhone(caller);
+  if (!isAdmin) { showToast("Acces reserve a l administrateur", "error"); return; }
+  if (!turso) { showToast("⚠️ Base non connectée", "error"); return; }
+
+  let eleves = [];
+  try {
+    const resUsers = await turso.execute({ sql: "SELECT phone, nom, role, is_premium, premium_until FROM users WHERE phone IS NOT NULL AND phone != '' ORDER BY id DESC LIMIT 500", args: [] });
+    const pseudos = {};
+    try {
+      const resPseudo = await turso.execute({ sql: "SELECT phone, pseudo FROM utilisateurs WHERE pseudo IS NOT NULL AND pseudo != ''", args: [] });
+      (resPseudo.rows || []).forEach(r => { pseudos[r.phone] = r.pseudo; });
+    } catch(e) {}
+    eleves = (resUsers.rows || []).map(r => ({
+      phone: r.phone,
+      pseudo: pseudos[r.phone] || r.nom || "",
+      role: r.role || "user",
+      isPremium: Number(r.is_premium) === 1,
+      premiumUntil: Number(r.premium_until) || 0
+    }));
+  } catch(e) { showToast("Erreur de chargement des utilisateurs", "error"); return; }
+
+  const existing = document.getElementById("gestionUserModal");
+  if (existing) existing.remove();
+
+  const modal = document.createElement("div");
+  modal.id = "gestionUserModal";
+  modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:99999;display:flex;align-items:flex-end;justify-content:center";
+
+  const sheet = document.createElement("div");
+  sheet.style.cssText = "background:white;border-radius:20px 20px 0 0;width:100%;max-width:430px;max-height:88vh;display:flex;flex-direction:column";
+
+  const header = document.createElement("div");
+  header.style.cssText = "padding:20px 20px 12px;border-bottom:1px solid #f0f0f0;display:flex;align-items:center;justify-content:space-between";
+  header.innerHTML = '<div style="font-weight:900;font-size:16px;color:#B91C1C">🛡️ Gérer un utilisateur</div>';
+  const btnX = document.createElement("button");
+  btnX.textContent = "✕";
+  btnX.style.cssText = "background:#f0f0f0;border:none;border-radius:50%;width:32px;height:32px;font-size:14px;cursor:pointer;font-weight:900";
+  btnX.onclick = function() { modal.remove(); };
+  header.appendChild(btnX);
+  sheet.appendChild(header);
+
+  const body = document.createElement("div");
+  body.style.cssText = "padding:16px 20px;overflow-y:auto;flex:1";
+
+  body.innerHTML = `
+    <div style="font-size:11px;color:#666;margin-bottom:10px">Choisis un utilisateur dans la liste (ou tape directement son numéro), puis l'action à effectuer.</div>
+    <div style="font-size:10px;font-weight:700;color:#888;margin-bottom:4px">UTILISATEUR</div>
+    <select id="gu-select" style="width:100%;padding:11px;border:1.5px solid #e5e0f5;border-radius:10px;margin-bottom:10px;font-size:13px">
+      <option value="">— Sélectionner un utilisateur (${eleves.length}) —</option>
+      ${eleves.map(e => `<option value="${esc(e.phone)}">${esc(e.pseudo ? (e.pseudo + " — " + e.phone) : e.phone)}${e.isPremium ? " ⭐" : ""}${e.role !== "user" ? " [" + esc(e.role) + "]" : ""}</option>`).join("")}
+    </select>
+    <div style="font-size:10px;font-weight:700;color:#888;margin-bottom:4px">OU NUMÉRO MANUEL</div>
+    <input id="gu-manuel" type="text" placeholder="Ex: 6XXXXXXXX" style="width:100%;padding:11px;border:1.5px solid #e5e0f5;border-radius:10px;margin-bottom:14px;font-size:13px;box-sizing:border-box">
+    <div id="gu-result" style="font-size:12px;font-weight:700;margin-bottom:6px"></div>
+  `;
+  sheet.appendChild(body);
+
+  const footer = document.createElement("div");
+  footer.style.cssText = "padding:14px;border-top:1px solid #f0f0f0;display:flex;flex-direction:column;gap:8px";
+
+  const btnRetirer = document.createElement("button");
+  btnRetirer.textContent = "🔻 Retirer le Premium";
+  btnRetirer.style.cssText = "width:100%;background:linear-gradient(135deg,#F59E0B,#D97706);color:white;border:none;border-radius:14px;padding:14px;font-weight:900;font-size:14px;cursor:pointer";
+  btnRetirer.onclick = () => _confirmerRetraitPremium(modal);
+  footer.appendChild(btnRetirer);
+
+  const btnSupprimer = document.createElement("button");
+  btnSupprimer.textContent = "🗑️ Supprimer cet utilisateur";
+  btnSupprimer.style.cssText = "width:100%;background:linear-gradient(135deg,#DC2626,#991B1B);color:white;border:none;border-radius:14px;padding:14px;font-weight:900;font-size:14px;cursor:pointer";
+  btnSupprimer.onclick = () => _confirmerSuppressionUtilisateur(modal);
+  footer.appendChild(btnSupprimer);
+
+  sheet.appendChild(footer);
+  modal.appendChild(sheet);
+  document.body.appendChild(modal);
+}
+
+function _guNumeroChoisi() {
+  const select = document.getElementById("gu-select");
+  const manuel = document.getElementById("gu-manuel");
+  return (manuel?.value || "").trim() || select?.value || "";
+}
+
+async function _confirmerRetraitPremium(modal) {
+  const phone = _guNumeroChoisi();
+  const resultEl = document.getElementById("gu-result");
+  if (!phone) { if (resultEl) { resultEl.textContent = "❌ Choisis ou indique un utilisateur."; resultEl.style.color = "#c62828"; } return; }
+
+  const ok = window.confirm(`Retirer le statut Premium de ${phone} ?`);
+  if (!ok) return;
+
+  const resultat = await _retirerPremiumParTelephone(phone);
+  if (!resultat.ok) {
+    if (resultEl) { resultEl.textContent = "❌ " + resultat.message; resultEl.style.color = "#c62828"; }
+    return;
+  }
+  if (resultEl) { resultEl.textContent = `✅ Premium retiré pour ${phone}.`; resultEl.style.color = "#059669"; }
+  showToast("🔻 Premium retiré pour " + phone, "success");
+  addNotification("🔻 Premium retiré manuellement", phone, "info");
+  setTimeout(() => { if (modal) modal.remove(); }, 1200);
+}
+
+async function _confirmerSuppressionUtilisateur(modal) {
+  const phone = _guNumeroChoisi();
+  const resultEl = document.getElementById("gu-result");
+  if (!phone) { if (resultEl) { resultEl.textContent = "❌ Choisis ou indique un utilisateur."; resultEl.style.color = "#c62828"; } return; }
+
+  const ok = window.confirm(`⚠️ Supprimer DÉFINITIVEMENT le compte ${phone} ?\n\nSon statut Premium, ses sessions d'appareils et sa fiche seront effacés. Il pourra se réinscrire plus tard avec le même numéro.\n\nSon contenu déjà publié (cours/vidéos) ne sera PAS supprimé.\n\nConfirmer ?`);
+  if (!ok) return;
+
+  const resultat = await _supprimerUtilisateurParTelephone(phone);
+  if (!resultat.ok) {
+    if (resultEl) { resultEl.textContent = "❌ " + resultat.message; resultEl.style.color = "#c62828"; }
+    return;
+  }
+  if (resultEl) { resultEl.textContent = `✅ Utilisateur ${phone} supprimé.`; resultEl.style.color = "#059669"; }
+  showToast("🗑️ Utilisateur supprimé", "success");
+  addNotification("🗑️ Compte supprimé", phone, "warning");
+  setTimeout(() => { if (modal) modal.remove(); }, 1200);
+}
+
 async function showModeratorPanel() {
   const phone = localStorage.getItem("userPhone") || "";
   await chargerModerateursTurso();

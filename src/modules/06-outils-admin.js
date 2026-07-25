@@ -3182,6 +3182,7 @@ window.ouvrirCorrectionClasses = ouvrirCorrectionClasses;
 window.ouvrirDepuisPlus = ouvrirDepuisPlus;
 window.ouvrirDeviceMgr = ouvrirDeviceMgr;
 window.ouvrirEnvoiPreuvePaiement = ouvrirEnvoiPreuvePaiement;
+window.ouvrirGestionUtilisateur = ouvrirGestionUtilisateur;
 window.ouvrirGuide = ouvrirGuide;
 window.ouvrirImportCSVVideo = ouvrirImportCSVVideo;
 window.ouvrirLegal = ouvrirLegal;
