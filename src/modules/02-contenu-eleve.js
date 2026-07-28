@@ -104,6 +104,47 @@ function setQuizNb(n, btn) {
   btn.classList.add("active");
 }
 
+// ========== CHRONO — BOUTONS RAPIDES (Illimité / Personnalisé) ==========
+function _quizTimerSetValeur(v) {
+  const input = document.getElementById("quiz-timer");
+  const label = document.getElementById("quiz-timer-val");
+  if (input) input.value = v;
+  if (label) label.textContent = v == 0 ? "Désactivé" : v + "s";
+}
+
+function _quizTimerActiverBouton(btn) {
+  document.querySelectorAll(".quiz-timer-quick-btn").forEach(b => {
+    b.style.background = "var(--card)"; b.style.borderColor = "var(--border)"; b.style.color = "var(--t2)";
+  });
+  if (btn) { btn.style.background = "var(--p)"; btn.style.borderColor = "var(--p)"; btn.style.color = "white"; }
+}
+
+function quizTimerRapide(sec, btn) {
+  _quizTimerSetValeur(sec);
+  _quizTimerActiverBouton(btn);
+}
+
+function quizTimerIllimite(btn) {
+  _quizTimerSetValeur(0);
+  _quizTimerActiverBouton(btn);
+}
+
+function quizTimerPersonnalise() {
+  const actuel = parseInt(document.getElementById("quiz-timer")?.value) || 30;
+  const saisie = prompt("Durée du quiz en secondes (0 = illimité, max 300) :", actuel);
+  if (saisie === null) return;
+  let sec = parseInt(saisie);
+  if (isNaN(sec) || sec < 0) { showToast("❌ Durée invalide", "error"); return; }
+  sec = Math.min(sec, 300);
+  _quizTimerSetValeur(sec);
+  _quizTimerActiverBouton(null); // aucun bouton rapide ne correspond forcément à cette valeur
+}
+
+// Garde les boutons rapides synchronisés si l'utilisateur bouge le slider directement
+function quizTimerSyncBtns() {
+  _quizTimerActiverBouton(null);
+}
+
 // ========== PANNEAU "PLUS" (Quiz / Planning / Simulateur / Progression&Badges / Forum) ==========
 // Correspondance section du panneau → sous-onglet interne de la page Quiz existante.
 const PLUS_SUBTAB_MAP = { quiz: "quiz", planning: "plan", simulateur: "sim", badges: "prog" };
@@ -297,6 +338,8 @@ function afficherQuestion() {
   const q = quizState.questions[quizState.current];
   if (!q) { terminerQuiz(); return; }
   quizState.answered = false;
+  if (quizState._autoNextTimeout) { clearTimeout(quizState._autoNextTimeout); quizState._autoNextTimeout = null; }
+  if (quizState._autoNextTick) { clearInterval(quizState._autoNextTick); quizState._autoNextTick = null; }
   const total = quizState.questions.length;
   const idx = quizState.current;
 
@@ -304,7 +347,8 @@ function afficherQuestion() {
   document.getElementById("quiz-prog-bar").style.width = `${((idx+1)/total)*100}%`;
   document.getElementById("quiz-question").textContent = q.q;
   document.getElementById("quiz-feedback").style.display = "none";
-  document.getElementById("quiz-next-btn").style.display = "none";
+  const autoNextTxt = document.getElementById("quiz-autonext-txt");
+  if (autoNextTxt) autoNextTxt.style.display = "none";
 
   const choicesEl = document.getElementById("quiz-choices");
   choicesEl.innerHTML = "";
@@ -317,6 +361,34 @@ function afficherQuestion() {
   });
 
   // Chrono géré globalement — rien à faire ici
+}
+
+// ========== SONS DE FEEDBACK (synthétisés — aucun fichier audio requis) ==========
+// Petit jingle "chanté" très court : notes ascendantes pour une bonne réponse,
+// notes descendantes plus sobres pour une mauvaise réponse.
+function _jouerSonQuiz(type) {
+  try {
+    if (!window._quizAudioCtx) window._quizAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = window._quizAudioCtx;
+    if (ctx.state === "suspended") ctx.resume();
+    const now = ctx.currentTime;
+    // Do-Mi-Sol (accord majeur montant) pour une bonne réponse ;
+    // Sol-Ré (intervalle descendant, plus feutré) pour une mauvaise réponse.
+    const notes = type === "correct" ? [523.25, 659.25, 783.99] : [392.00, 293.66];
+    notes.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      const t = now + i * 0.1;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(type === "correct" ? 0.16 : 0.12, t + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.24);
+    });
+  } catch(e) { /* audio indisponible (ex: navigateur restrictif) — on ignore silencieusement */ }
 }
 
 function repondreQuiz(idx, btn, correct) {
@@ -332,9 +404,12 @@ function repondreQuiz(idx, btn, correct) {
   const choices = document.querySelectorAll(".quiz-choice");
   choices.forEach(c => c.classList.add("disabled"));
 
+  const estCorrect = idx === correct;
+  _jouerSonQuiz(estCorrect ? "correct" : "wrong");
+
   const fb = document.getElementById("quiz-feedback");
   fb.style.display = "block";
-  if (idx === correct) {
+  if (estCorrect) {
     quizState.score++;
     btn.classList.add("correct");
     fb.style.background = "linear-gradient(135deg,#d1fae5,#ecfdf5)";
@@ -350,10 +425,30 @@ function repondreQuiz(idx, btn, correct) {
     const expl = q && q.explication ? `<div style="margin-top:6px;font-weight:600;font-size:11px;opacity:0.85">💡 ${q.explication}</div>` : "";
     fb.innerHTML = `<span>❌ La bonne réponse était : <b>${quizState.questions[quizState.current].c[correct]}</b></span>${expl}`;
   }
-  document.getElementById("quiz-next-btn").style.display = "block";
+
+  // ── Avance automatique — plus de bouton "Continuer" ──
+  // 5s si mauvaise réponse (le temps de lire le conseil affiché en bas),
+  // 2s si bonne réponse.
+  const delaiMs = estCorrect ? 2000 : 5000;
+  const autoNextTxt = document.getElementById("quiz-autonext-txt");
+  let secondesRestantes = Math.ceil(delaiMs / 1000);
+  if (autoNextTxt) {
+    autoNextTxt.style.display = "block";
+    autoNextTxt.textContent = `➡️ Suivant dans ${secondesRestantes}s...`;
+    quizState._autoNextTick = setInterval(() => {
+      secondesRestantes--;
+      if (secondesRestantes > 0) autoNextTxt.textContent = `➡️ Suivant dans ${secondesRestantes}s...`;
+    }, 1000);
+  }
+  quizState._autoNextTimeout = setTimeout(() => {
+    if (quizState._autoNextTick) { clearInterval(quizState._autoNextTick); quizState._autoNextTick = null; }
+    quizNextQuestion();
+  }, delaiMs);
 }
 
 function quizNextQuestion() {
+  if (quizState._autoNextTimeout) { clearTimeout(quizState._autoNextTimeout); quizState._autoNextTimeout = null; }
+  if (quizState._autoNextTick) { clearInterval(quizState._autoNextTick); quizState._autoNextTick = null; }
   quizState.answered = false;
   quizState.current++;
 
@@ -371,6 +466,8 @@ function terminerQuiz() {
     clearTimeout(quizState.timerInterval);
     quizState.timerInterval = null;
   }
+  if (quizState._autoNextTimeout) { clearTimeout(quizState._autoNextTimeout); quizState._autoNextTimeout = null; }
+  if (quizState._autoNextTick) { clearInterval(quizState._autoNextTick); quizState._autoNextTick = null; }
   const total = quizState.questions.length;
   const score = quizState.score;
   const pct = Math.round((score/total)*100);
@@ -438,6 +535,8 @@ function terminerQuiz() {
 function rejouerQuiz() {
   if (quizState.timerGen) quizState.timerGen++;
   if (quizState.timerInterval) { clearTimeout(quizState.timerInterval); quizState.timerInterval = null; }
+  if (quizState._autoNextTimeout) { clearTimeout(quizState._autoNextTimeout); quizState._autoNextTimeout = null; }
+  if (quizState._autoNextTick) { clearInterval(quizState._autoNextTick); quizState._autoNextTick = null; }
   document.getElementById("quiz-result").style.display = "none";
   lancerQuiz();
 }
@@ -941,6 +1040,133 @@ function quizUpdateChapitres() {
     opt.value = ch; opt.textContent = ch;
     sel.appendChild(opt);
   });
+}
+
+// ========== 🎬 QUIZ IA — GÉNÉRATION PAR L'ÉLÈVE (Premium, 3/jour) ==========
+const QUIZ_IA_DAILY_MAX = 3;
+const QUIZ_IA_NB_QUESTIONS = 6;
+
+function _quizIACompteurAujourdhui() {
+  const today = new Date().toLocaleDateString("fr-FR");
+  const stored = JSON.parse(localStorage.getItem("quizIADailyCount") || "{}");
+  return stored[today] || 0;
+}
+
+function _quizIAIncrementerCompteur() {
+  const today = new Date().toLocaleDateString("fr-FR");
+  // On ne garde que la date du jour — évite d'accumuler l'historique indéfiniment
+  const count = _quizIACompteurAujourdhui() + 1;
+  localStorage.setItem("quizIADailyCount", JSON.stringify({ [today]: count }));
+  return count;
+}
+
+function ouvrirGenerateurQuizIA() {
+  if (!checkPremium()) { openPremiumGate("quizia"); return; }
+  const restant = QUIZ_IA_DAILY_MAX - _quizIACompteurAujourdhui();
+  if (restant <= 0) {
+    showToast("⏳ Limite atteinte : 3 quiz IA par jour. Reviens demain !", "error");
+    return;
+  }
+  const compteurEl = document.getElementById("quizIAGenCompteur");
+  if (compteurEl) compteurEl.textContent = `${restant}/${QUIZ_IA_DAILY_MAX} génération(s) restante(s) aujourd'hui`;
+
+  // Réutilise la liste des classes visibles pour l'élève
+  const classeSel = document.getElementById("quizia-classe");
+  if (classeSel) {
+    classeSel.innerHTML = '<option value="">— Choisir la classe —</option>';
+    classesVisibles().forEach(c => {
+      const opt = document.createElement("option");
+      opt.value = c; opt.textContent = c;
+      classeSel.appendChild(opt);
+    });
+  }
+  quizIAUpdateMatieres();
+  const statusEl = document.getElementById("quizIAGenStatus");
+  if (statusEl) statusEl.style.display = "none";
+  document.getElementById("quizia-chapitre").value = "";
+  document.getElementById("quizia-sujet").value = "";
+  document.getElementById("quizIAGenModal")?.classList.add("show");
+}
+
+function fermerGenerateurQuizIA() {
+  document.getElementById("quizIAGenModal")?.classList.remove("show");
+}
+
+function quizIAUpdateMatieres() {
+  const classeEl = document.getElementById("quizia-classe");
+  const sel = document.getElementById("quizia-matiere");
+  if (!classeEl || !sel) return;
+  const classe = classeEl.value;
+  sel.innerHTML = '<option value="">— Choisir la matière —</option>';
+  const mats = classe ? (MATIERES_PAR_CLASSE[classe] || MATIERES) : MATIERES;
+  mats.forEach(m => {
+    const opt = document.createElement("option");
+    opt.value = m; opt.textContent = NOMS_MATIERES[m] || m;
+    sel.appendChild(opt);
+  });
+}
+
+// Alias conservé pour cohérence avec les autres selects classe→matière (aucun 3ᵉ niveau ici, le chapitre est en texte libre)
+function quizIAUpdateChapitres() {}
+
+async function genererQuizIA() {
+  if (!checkPremium()) { openPremiumGate("quizia"); return; }
+  if (_quizIACompteurAujourdhui() >= QUIZ_IA_DAILY_MAX) {
+    showToast("⏳ Limite atteinte : 3 quiz IA par jour. Reviens demain !", "error");
+    return;
+  }
+  const classe   = document.getElementById("quizia-classe")?.value || "";
+  const mat      = document.getElementById("quizia-matiere")?.value || "";
+  const chapitre = document.getElementById("quizia-chapitre")?.value?.trim() || "";
+  const sujet    = document.getElementById("quizia-sujet")?.value?.trim() || "";
+  if (!classe) { showToast("❌ Choisis la classe", "error"); return; }
+  if (!mat)    { showToast("❌ Choisis la matière", "error"); return; }
+
+  const btn = document.getElementById("quizIAGenBtn");
+  const statusEl = document.getElementById("quizIAGenStatus");
+  if (btn) { btn.disabled = true; btn.style.opacity = "0.6"; btn.textContent = "⏳ Génération en cours..."; }
+  if (statusEl) {
+    statusEl.style.display = "block";
+    statusEl.style.background = "var(--bg)"; statusEl.style.color = "var(--t2)";
+    statusEl.textContent = "🤖 L'IA prépare tes questions, patiente quelques secondes...";
+  }
+
+  try {
+    const prompt = _construirePromptQuizIA(classe, mat, chapitre, sujet, QUIZ_IA_NB_QUESTIONS);
+    const { texte, fournisseur } = await _appelIAQuizFailover(prompt);
+    const questions = _parserQuestionsQuizIA(texte);
+    if (!questions.length) throw new Error("L'IA n'a renvoyé aucune question exploitable, réessaie.");
+
+    // Sauvegarde en attente de validation modérateur — n'apparaît pas encore aux élèves
+    let tursoId = null;
+    if (turso) {
+      try {
+        await turso.execute({
+          sql: `INSERT INTO quiz_ia_pending (classe,matiere,chapitre,sujet,questions,fournisseur,auteur,statut,date) VALUES (?,?,?,?,?,?,?,?,?)`,
+          args: [classe, mat, chapitre, sujet, JSON.stringify(questions), fournisseur,
+                 localStorage.getItem("userPhone") || "élève", "attente", new Date().toLocaleDateString("fr-FR")]
+        });
+        const idRes = await turso.execute({ sql: "SELECT last_insert_rowid() as id", args: [] });
+        tursoId = idRes.rows?.[0]?.id || null;
+      } catch(e) { console.warn("Quiz IA — sauvegarde Turso:", e.message); }
+    }
+    if (!tursoId) throw new Error("Impossible d'enregistrer le quiz (connexion indisponible), réessaie plus tard.");
+
+    _quizIAIncrementerCompteur();
+    if (statusEl) {
+      statusEl.style.background = "linear-gradient(135deg,#d1fae5,#ecfdf5)"; statusEl.style.color = "#065F46";
+      statusEl.textContent = `✅ Quiz généré (${questions.length} questions, via ${fournisseur}) — envoyé à un modérateur pour validation !`;
+    }
+    showToast("✅ Ton quiz IA a été envoyé pour validation, il apparaîtra dans tes quiz dès qu'un modérateur l'aura approuvé !", "success");
+    setTimeout(fermerGenerateurQuizIA, 1800);
+  } catch(e) {
+    if (statusEl) {
+      statusEl.style.background = "#fee2e2"; statusEl.style.color = "#991B1B";
+      statusEl.textContent = "❌ " + (e.message || "Erreur lors de la génération, réessaie.");
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.style.opacity = "1"; btn.textContent = "✨ Générer le quiz"; }
+  }
 }
 
 function qfFilterUpdateMatieres() {

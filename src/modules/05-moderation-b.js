@@ -283,6 +283,7 @@ function openPremiumGate(feature = "") {
     classement:    "Apparais dans le classement avec le Premium.",
     pdf:           "Le téléchargement des PDF est réservé aux membres Premium.",
     assistance:    "L'assistance prioritaire est réservée aux membres Premium.",
+    quizia:        "La génération de quiz par IA est réservée aux membres Premium (3 quiz IA par jour).",
   };
   const msg = msgs[feature] || "Cette fonctionnalité est réservée aux membres Premium.";
   const modal = document.getElementById("lockModal");
@@ -3235,6 +3236,213 @@ async function _appelGeminiBrut(apiKey, parts, opts) {
   // Gemini peut entourer le JSON de ```json ... ``` malgré la consigne — on nettoie
   texte = texte.replace(/```json|```/g, "").trim();
   return texte;
+}
+
+// ========== QUIZ IA — GÉNÉRATION AVEC BASCULE AUTOMATIQUE ENTRE FOURNISSEURS ==========
+// Réservé aux membres Premium (bouton élève 🎬 Quiz IA). Essaie d'abord les clés
+// Gemini dédiées (rotation + retry si plusieurs sont configurées), puis bascule
+// automatiquement sur DeepSeek si Gemini est indisponible/en panne/quota dépassé.
+// Retourne { texte, fournisseur } ou lève une erreur si aucun fournisseur ne répond.
+async function _appelIAQuizFailover(promptTexte) {
+  const clesGemini = (GEMINI_KEYS_QUIZIA && GEMINI_KEYS_QUIZIA.length) ? GEMINI_KEYS_QUIZIA : GEMINI_KEYS_ZIP;
+  let derniereErreur = null;
+  for (let i = 0; i < clesGemini.length; i++) {
+    const cle = clesGemini[i];
+    if (!cle) continue;
+    try {
+      const texte = await _appelGeminiBrut(cle, [{ text: promptTexte }], { maxOutputTokens: 3500 });
+      return { texte, fournisseur: "Gemini" };
+    } catch(e) {
+      derniereErreur = e;
+      console.warn(`Quiz IA — échec Gemini (clé ${i + 1}/${clesGemini.length}):`, e.message);
+      // On continue vers la clé suivante quelle que soit l'erreur (429, panne réseau, clé invalide...)
+    }
+  }
+  // 2) Repli automatique sur un fournisseur gratuit compatible OpenAI (Groq,
+  //    OpenRouter, Mistral...) configuré par l'admin dans Paramètres
+  if (IA_SECOURS_URL && IA_SECOURS_KEY && IA_SECOURS_MODEL) {
+    try {
+      const texte = await _appelIACompatibleOpenAI(IA_SECOURS_URL, IA_SECOURS_KEY, IA_SECOURS_MODEL, promptTexte);
+      return { texte, fournisseur: "Secours" };
+    } catch(e) {
+      derniereErreur = e;
+      console.warn("Quiz IA — échec fournisseur de secours:", e.message);
+    }
+  }
+  // 3) Dernier recours : DeepSeek (payant) si configuré
+  if (typeof DEEPSEEK_API_KEY !== "undefined" && DEEPSEEK_API_KEY) {
+    try {
+      const texte = await _appelIACompatibleOpenAI("https://api.deepseek.com/chat/completions", DEEPSEEK_API_KEY, "deepseek-chat", promptTexte);
+      return { texte, fournisseur: "DeepSeek" };
+    } catch(e) {
+      derniereErreur = e;
+      console.warn("Quiz IA — échec DeepSeek:", e.message);
+    }
+  }
+  throw new Error(derniereErreur
+    ? `Tous les fournisseurs IA ont échoué (${derniereErreur.message})`
+    : "Aucune clé IA configurée pour la génération de quiz (Paramètres → Clés IA Quiz).");
+}
+
+// Appel générique à toute API compatible "OpenAI chat completions" (Groq,
+// OpenRouter, Mistral, DeepSeek, Together, Cerebras...). Beaucoup de ces
+// fournisseurs offrent un niveau gratuit — utilisé comme secours si Gemini échoue.
+async function _appelIACompatibleOpenAI(url, apiKey, model, promptTexte) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: promptTexte }],
+      temperature: 0.3,
+      max_tokens: 3500
+    })
+  });
+  if (!res.ok) {
+    const errTxt = await res.text().catch(() => "");
+    const err = new Error(`HTTP ${res.status}: ${errTxt.slice(0, 200)}`);
+    err.status = res.status;
+    throw err;
+  }
+  const data = await res.json();
+  let texte = data?.choices?.[0]?.message?.content || "";
+  texte = texte.replace(/```json|```/g, "").trim();
+  return texte;
+}
+
+// Construit le prompt de génération d'un quiz par IA — même exigence de rigueur
+// factuelle que l'analyse de documents, adaptée au programme scolaire camerounais.
+function _construirePromptQuizIA(classe, matiere, chapitre, sujet, nbQuestions) {
+  const matLabel = (typeof NOMS_MATIERES !== "undefined" && NOMS_MATIERES[matiere]) || matiere || "culture générale";
+  return `Tu es un professeur camerounais expérimenté qui prépare un quiz scolaire pour l'application éducative LearnUpr.
+
+Génère exactement ${nbQuestions} questions à choix multiples (QCM), niveau scolaire "${classe || "non précisé"}", matière "${matLabel}"${chapitre ? `, chapitre "${chapitre}"` : ""}${sujet ? `, sur le sujet précis suivant : "${sujet}"` : ""}.
+
+RÈGLES STRICTES :
+- Chaque question a exactement 4 choix, une seule bonne réponse.
+- Questions factuellement exactes, non ambiguës, adaptées au programme camerounais.
+- N'invente aucun fait douteux ; reste sur des notions de programme scolaire classiques.
+- Réponds STRICTEMENT avec un tableau JSON, sans aucun texte avant/après, sans balises markdown, format exact :
+[{"q":"texte de la question","c":["choix A","choix B","choix C","choix D"],"r":0,"explication":"courte explication (1 phrase) de la bonne réponse"}]
+- "r" est l'INDEX entier (0 à 3) du bon choix dans le tableau "c".`;
+}
+
+// Parse la réponse IA brute en tableau de questions valides, en filtrant tout
+// ce qui ne respecte pas le format attendu (4 choix, index de réponse 0-3).
+function _parserQuestionsQuizIA(texteBrut) {
+  let arr;
+  try { arr = JSON.parse(texteBrut); } catch(e) {
+    // Tentative de récupération si l'IA a entouré le JSON de texte malgré la consigne
+    const match = texteBrut.match(/\[[\s\S]*\]/);
+    if (match) { try { arr = JSON.parse(match[0]); } catch(e2) { return []; } }
+    else return [];
+  }
+  if (!Array.isArray(arr)) return [];
+  return arr.filter(q =>
+    q && typeof q.q === "string" && q.q.trim() &&
+    Array.isArray(q.c) && q.c.length === 4 && q.c.every(c => typeof c === "string" && c.trim()) &&
+    Number.isInteger(Number(q.r)) && Number(q.r) >= 0 && Number(q.r) <= 3
+  ).map(q => ({ q: q.q.trim(), c: q.c.map(c => c.trim()), r: Number(q.r), explication: (q.explication || "").trim() }));
+}
+
+// ========== ONGLET MODÉRATEUR "🎬 Test IA" ==========
+let _quizIAPendingCache = [];
+let _quizIATestState = null; // état du mini-lecteur de test (indépendant du quiz élève)
+
+async function chargerQuizIAPending() {
+  const list = document.getElementById("modoQuizIAList");
+  if (!list) return;
+  list.innerHTML = `<div class="empty-state pulse">⏳ Chargement des quiz IA en attente...</div>`;
+  if (!turso) { list.innerHTML = `<div class="empty-state">⚠️ Turso non connecté</div>`; return; }
+  try {
+    const res = await turso.execute({ sql: "SELECT * FROM quiz_ia_pending WHERE statut='attente' ORDER BY id DESC", args: [] });
+    _quizIAPendingCache = (res.rows || []).map(r => ({ ...r, questions: JSON.parse(r.questions || "[]") }));
+    renderQuizIAPendingList();
+  } catch(e) {
+    list.innerHTML = `<div class="empty-state">❌ Erreur de chargement : ${e.message}</div>`;
+  }
+}
+
+function renderQuizIAPendingList() {
+  const list = document.getElementById("modoQuizIAList");
+  if (!list) return;
+  if (!_quizIAPendingCache.length) {
+    list.innerHTML = `<div class="empty-state">✅ Aucun quiz IA en attente de test</div>`;
+    return;
+  }
+  list.innerHTML = _quizIAPendingCache.map(item => `
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:10px">
+      <div style="font-weight:800;font-size:13px;color:var(--p);margin-bottom:4px">🎬 ${item.classe || "Classe ?"} · ${(typeof NOMS_MATIERES!=='undefined' && NOMS_MATIERES[item.matiere]) || item.matiere || "Matière ?"}${item.chapitre ? " · " + item.chapitre : ""}</div>
+      ${item.sujet ? `<div style="font-size:11px;color:var(--t2);margin-bottom:4px">📝 Sujet demandé : ${item.sujet}</div>` : ""}
+      <div style="font-size:10px;color:var(--t3)">👤 ${item.auteur || "élève"} · ${item.date || ""} · ${item.questions.length} question(s) · via ${item.fournisseur || "IA"}</div>
+      <div style="display:flex;gap:6px;margin-top:10px">
+        <button onclick="_afficherTestQuizIA(${item.id})" style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:9px;font-weight:800;font-size:11px;cursor:pointer;color:var(--t2)">▶️ Tester</button>
+        <button onclick="_validerQuizIA(${item.id})" style="flex:1;background:linear-gradient(135deg,#16A34A,#15803D);color:white;border:none;border-radius:10px;padding:9px;font-weight:800;font-size:11px;cursor:pointer">✅ Valider</button>
+        <button onclick="_rejeterQuizIA(${item.id})" style="flex:1;background:linear-gradient(135deg,#DC2626,#B91C1C);color:white;border:none;border-radius:10px;padding:9px;font-weight:800;font-size:11px;cursor:pointer">❌ Rejeter</button>
+      </div>
+      <div id="quizIATestZone-${item.id}"></div>
+    </div>
+  `).join("");
+}
+
+// Mini-lecteur de test manuel (sans chrono ni sons — outil de contrôle qualité modérateur)
+function _afficherTestQuizIA(id) {
+  const item = _quizIAPendingCache.find(q => q.id === id);
+  if (!item) return;
+  _quizIATestState = { id, current: 0, questions: item.questions };
+  _rendreQuestionTestQuizIA();
+}
+
+function _rendreQuestionTestQuizIA() {
+  if (!_quizIATestState) return;
+  const { id, current, questions } = _quizIATestState;
+  const zone = document.getElementById(`quizIATestZone-${id}`);
+  if (!zone) return;
+  const q = questions[current];
+  if (!q) {
+    zone.innerHTML = `<div style="margin-top:10px;padding:10px;background:var(--bg);border-radius:10px;font-size:11px;font-weight:800;color:var(--p);text-align:center">✅ Fin du test — ${questions.length} question(s) vérifiée(s)</div>`;
+    return;
+  }
+  zone.innerHTML = `
+    <div style="margin-top:10px;padding:12px;background:var(--bg);border-radius:12px">
+      <div style="font-size:10px;font-weight:800;color:var(--t3);margin-bottom:6px">Question ${current+1}/${questions.length}</div>
+      <div style="font-size:12px;font-weight:800;margin-bottom:8px">${q.q}</div>
+      ${q.c.map((c,i) => `<div style="padding:8px;border-radius:8px;margin-bottom:5px;font-size:11px;font-weight:700;background:${i===q.r?'linear-gradient(135deg,#d1fae5,#ecfdf5)':'var(--card)'};color:${i===q.r?'#065F46':'var(--t2)'};border:1px solid var(--border)">${i===q.r?'✅ ':''}${c}</div>`).join("")}
+      ${q.explication ? `<div style="font-size:10px;color:var(--t3);margin-top:4px">💡 ${q.explication}</div>` : ""}
+      <button onclick="_quizIATestState.current++;_rendreQuestionTestQuizIA()" style="width:100%;margin-top:8px;background:var(--p);color:white;border:none;border-radius:8px;padding:9px;font-weight:800;font-size:11px;cursor:pointer">Question suivante →</button>
+    </div>
+  `;
+}
+
+// Valide un quiz IA : publie chacune de ses questions dans le pool réel des
+// quiz élèves (même pipeline que l'ajout manuel par un modérateur), puis
+// marque l'entrée comme validée.
+async function _validerQuizIA(id) {
+  const item = _quizIAPendingCache.find(q => q.id === id);
+  if (!item) return;
+  if (!confirm(`Valider ce quiz IA et publier ses ${item.questions.length} question(s) auprès des élèves ?`)) return;
+  showToast("⏳ Publication en cours...", "info");
+  const sourceTag = `IA:${item.sujet || item.chapitre || "généré"}`;
+  let ok = 0;
+  for (const q of item.questions) {
+    const newQ = { classe: item.classe, matiere: item.matiere, chapitre: item.chapitre || "Général", q: q.q, c: q.c, r: q.r, source: sourceTag, explication: q.explication || "" };
+    const tursoId = await sauvegarderQuizDansTurso(newQ);
+    if (tursoId) { newQ.id = tursoId; ok++; } else { newQ.id = Date.now() + Math.random(); }
+    customQuizQuestions.push(newQ);
+  }
+  localStorage.setItem("customQuizQuestionsV2", JSON.stringify(customQuizQuestions));
+  try { await turso.execute({ sql: "UPDATE quiz_ia_pending SET statut='valide' WHERE id=?", args: [id] }); } catch(e) {}
+  _quizIAPendingCache = _quizIAPendingCache.filter(q => q.id !== id);
+  renderQuizIAPendingList();
+  showToast(`✅ Quiz validé — ${ok}/${item.questions.length} question(s) publiée(s) aux élèves`, "success");
+}
+
+async function _rejeterQuizIA(id) {
+  if (!confirm("Rejeter ce quiz IA ? Il ne sera jamais proposé aux élèves.")) return;
+  try { await turso.execute({ sql: "UPDATE quiz_ia_pending SET statut='rejete' WHERE id=?", args: [id] }); } catch(e) {}
+  _quizIAPendingCache = _quizIAPendingCache.filter(q => q.id !== id);
+  renderQuizIAPendingList();
+  showToast("🗑️ Quiz IA rejeté", "info");
 }
 
 // Construit le prompt d'analyse de document scolaire camerounais — utilisé pour

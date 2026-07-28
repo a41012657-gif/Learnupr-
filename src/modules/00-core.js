@@ -150,8 +150,9 @@ let WHATSAPP_PAIEMENT_NUM = ""; // numéro Orange Money / WhatsApp pour preuves 
 let GEMINI_KEYS_ZIP      = [];  // 1) Analyse ZIP (classe/matière/lycée/année)
 let GEMINI_KEYS_DOUBLON  = [];  // 2) Détection de doublons (contributions élèves)
 let GEMINI_KEYS_CONTRIB  = [];  // 3) Analyse des fichiers soumis par les élèves
+let GEMINI_KEYS_QUIZIA   = [];  // 4) Génération de quiz par IA (bouton 🎬 Quiz IA élève)
 // Compteurs de rotation (un par usage), remis à zéro à chaque rechargement de page
-const _geminiRotationIdx = { zip: 0, doublon: 0, contrib: 0 };
+const _geminiRotationIdx = { zip: 0, doublon: 0, contrib: 0, quizia: 0 };
 
 // Découpe une chaîne "AIza...,AIza..." en tableau de clés propres (sans espaces, sans entrées vides)
 function _parseGeminiKeys(raw) {
@@ -162,7 +163,7 @@ function _parseGeminiKeys(raw) {
 // en tournant entre les clés disponibles si plusieurs ont été fournies. Retourne ""
 // si aucune clé n'est configurée pour cet usage (l'appelant doit alors ne pas appeler l'API).
 function getGeminiKey(usage) {
-  const map = { zip: GEMINI_KEYS_ZIP, doublon: GEMINI_KEYS_DOUBLON, contrib: GEMINI_KEYS_CONTRIB };
+  const map = { zip: GEMINI_KEYS_ZIP, doublon: GEMINI_KEYS_DOUBLON, contrib: GEMINI_KEYS_CONTRIB, quizia: GEMINI_KEYS_QUIZIA };
   const arr = map[usage] || [];
   if (!arr.length) return "";
   const idx = _geminiRotationIdx[usage] % arr.length;
@@ -176,6 +177,14 @@ function getGeminiKey(usage) {
 // clés spécifiques dans le panel.
 let GEMINI_API_KEY = ""; // conservé pour compatibilité avec d'anciens appels externes éventuels
 let DEEPSEEK_API_KEY = ""; // utilisée uniquement par l'outil de diagnostic admin pour corriger les classes non reconnues
+// ── Fournisseur IA de secours générique pour la génération de Quiz IA ──
+// Compatible avec toute API respectant le format "OpenAI chat completions"
+// (Groq, OpenRouter, Mistral, Together, Cerebras...). Beaucoup de ces
+// fournisseurs offrent un niveau gratuit généreux, contrairement à DeepSeek
+// qui est payant — utilisé seulement si Gemini ET ce secours échouent tous les deux.
+let IA_SECOURS_URL   = ""; // ex: https://api.groq.com/openai/v1/chat/completions
+let IA_SECOURS_KEY   = "";
+let IA_SECOURS_MODEL = ""; // ex: llama-3.3-70b-versatile
 
 // ⚠️ SÉCURITÉ : ces identifiants permettent de SUPPRIMER des fichiers sur
 // Cloudinary. Ils sont volontairement codés en dur ici à la demande du
@@ -205,8 +214,12 @@ async function _initConfig() {
   GEMINI_KEYS_ZIP     = _parseGeminiKeys(_cfg.geminiKeyZip     || ancienneCleUnique);
   GEMINI_KEYS_DOUBLON = _parseGeminiKeys(_cfg.geminiKeyDoublon || ancienneCleUnique);
   GEMINI_KEYS_CONTRIB = _parseGeminiKeys(_cfg.geminiKeyContrib || ancienneCleUnique);
+  GEMINI_KEYS_QUIZIA  = _parseGeminiKeys(_cfg.geminiKeyQuizIA  || ancienneCleUnique);
   GEMINI_API_KEY      = ancienneCleUnique || GEMINI_KEYS_ZIP[0] || "";
   DEEPSEEK_API_KEY     = _cfg.deepseekKey || localStorage.getItem("_lu_deepseek_key") || "";
+  IA_SECOURS_URL       = _cfg.iaSecoursUrl   || localStorage.getItem("_lu_ia_secours_url")   || "";
+  IA_SECOURS_KEY       = _cfg.iaSecoursKey   || localStorage.getItem("_lu_ia_secours_key")   || "";
+  IA_SECOURS_MODEL     = _cfg.iaSecoursModel || localStorage.getItem("_lu_ia_secours_model") || "";
 }
 
 function _appliquerVisibiliteTD() {
@@ -287,6 +300,10 @@ async function _chargerSettingsTurso() {
           GEMINI_KEYS_CONTRIB = _parseGeminiKeys(r.value);
           localStorage.setItem("_lu_gemini_contrib", r.value);
         }
+        if (r.key === "gemini_quizia" && r.value) {
+          GEMINI_KEYS_QUIZIA = _parseGeminiKeys(r.value);
+          localStorage.setItem("_lu_gemini_quizia", r.value);
+        }
         // Clé DeepSeek — même logique que les clés Gemini ci-dessus : Turso
         // est la source de vérité persistante, la balise embarquée/localStorage
         // ne suffisent pas seuls car ils se réinitialisent au redémarrage.
@@ -294,6 +311,9 @@ async function _chargerSettingsTurso() {
           DEEPSEEK_API_KEY = r.value;
           localStorage.setItem("_lu_deepseek_key", r.value);
         }
+        if (r.key === "ia_secours_url" && r.value)   { IA_SECOURS_URL   = r.value; localStorage.setItem("_lu_ia_secours_url", r.value); }
+        if (r.key === "ia_secours_key" && r.value)   { IA_SECOURS_KEY   = r.value; localStorage.setItem("_lu_ia_secours_key", r.value); }
+        if (r.key === "ia_secours_model" && r.value) { IA_SECOURS_MODEL = r.value; localStorage.setItem("_lu_ia_secours_model", r.value); }
         // Mot de passe admin — restaurer sur tout nouvel appareil admin
         if (r.key === "admin_pwd_hash" && r.value && !localStorage.getItem("adminPwdHash")) {
           localStorage.setItem("adminPwdHash", r.value);
@@ -339,10 +359,15 @@ if (localStorage.getItem("userRole") === "admin") {
   const z = localStorage.getItem("_lu_gemini_zip");
   const d = localStorage.getItem("_lu_gemini_doublon");
   const c = localStorage.getItem("_lu_gemini_contrib");
+  const q = localStorage.getItem("_lu_gemini_quizia");
   if (z && !GEMINI_KEYS_ZIP.length)     GEMINI_KEYS_ZIP     = _parseGeminiKeys(z);
   if (d && !GEMINI_KEYS_DOUBLON.length) GEMINI_KEYS_DOUBLON = _parseGeminiKeys(d);
   if (c && !GEMINI_KEYS_CONTRIB.length) GEMINI_KEYS_CONTRIB = _parseGeminiKeys(c);
+  if (q && !GEMINI_KEYS_QUIZIA.length)  GEMINI_KEYS_QUIZIA  = _parseGeminiKeys(q);
   if (GEMINI_KEYS_ZIP[0] && !GEMINI_API_KEY) GEMINI_API_KEY = GEMINI_KEYS_ZIP[0];
+  if (!IA_SECOURS_URL)   IA_SECOURS_URL   = localStorage.getItem("_lu_ia_secours_url")   || "";
+  if (!IA_SECOURS_KEY)   IA_SECOURS_KEY   = localStorage.getItem("_lu_ia_secours_key")   || "";
+  if (!IA_SECOURS_MODEL) IA_SECOURS_MODEL = localStorage.getItem("_lu_ia_secours_model") || "";
 })();
 
 // ── Constantes IA Gemini / anti-doublons (déclarées ici, tout en haut, plutôt
@@ -784,6 +809,19 @@ async function initTurso() {
       date TEXT DEFAULT ''
     )`, args: [] });
     try { await turso.execute({ sql: "ALTER TABLE quiz_questions ADD COLUMN source TEXT DEFAULT ''", args: [] }); } catch(e) {}
+    // Quiz générés par IA (bouton élève 🎬 Quiz IA) — en attente de test/validation par un modérateur
+    await turso.execute({ sql: `CREATE TABLE IF NOT EXISTS quiz_ia_pending (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      classe TEXT DEFAULT '',
+      matiere TEXT DEFAULT '',
+      chapitre TEXT DEFAULT '',
+      sujet TEXT DEFAULT '',
+      questions TEXT NOT NULL,
+      fournisseur TEXT DEFAULT '',
+      auteur TEXT DEFAULT '',
+      statut TEXT DEFAULT 'attente',
+      date TEXT DEFAULT ''
+    )`, args: [] });
     try { await turso.execute({ sql: "ALTER TABLE contenu ADD COLUMN description TEXT DEFAULT ''", args: [] }); } catch(e) {}
     // Migration : chapitre des vidéos (permet de regrouper les vidéos par chapitre, comme les cours)
     try { await turso.execute({ sql: "ALTER TABLE contenu ADD COLUMN chapitre TEXT DEFAULT ''", args: [] }); } catch(e) {}
@@ -816,12 +854,30 @@ async function initTurso() {
       total_questions INTEGER DEFAULT 0,
       UNIQUE(phone, label)
     )`, args: [] });
+    // Journal des ouvertures de l'app (pour le tableau de bord admin)
+    await turso.execute({ sql: `CREATE TABLE IF NOT EXISTS app_opens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      phone TEXT DEFAULT '',
+      jour TEXT NOT NULL,
+      date INTEGER NOT NULL
+    )`, args: [] });
+    // Notifications diffusées par l'admin à tous les utilisateurs
+    await turso.execute({ sql: `CREATE TABLE IF NOT EXISTS broadcast_notifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      titre TEXT NOT NULL,
+      message TEXT NOT NULL,
+      auteur TEXT DEFAULT '',
+      date INTEGER NOT NULL
+    )`, args: [] });
     // ⚠️ Le numéro admin est inséré dans Turso manuellement (pas en dur dans le code)
     // Synchroniser le contenu publié depuis Turso au lancement
     await syncContenuDepuisTurso();
     await syncQuizDepuisTurso();
     await syncPlanningDepuisTurso();
     await syncProgressionDepuisTurso();
+    // Enregistrer cette ouverture de l'app + récupérer les notifications diffusées par l'admin
+    await enregistrerOuvertureApp();
+    await syncBroadcastNotifsDepuisTurso();
     // Reconnexion automatique si numéro déjà en mémoire
     const savedPhone = localStorage.getItem("userPhone");
     if (savedPhone) {
@@ -2328,7 +2384,11 @@ async function ouvrirConfigSecurisee() {
           if (r.key === "gemini_zip" && r.value)         cfg.geminiKeyZip     = r.value;
           if (r.key === "gemini_doublon" && r.value)     cfg.geminiKeyDoublon = r.value;
           if (r.key === "gemini_contrib" && r.value)     cfg.geminiKeyContrib = r.value;
+          if (r.key === "gemini_quizia" && r.value)      cfg.geminiKeyQuizIA  = r.value;
           if (r.key === "deepseek_key" && r.value)       cfg.deepseekKey      = r.value;
+          if (r.key === "ia_secours_url" && r.value)     cfg.iaSecoursUrl     = r.value;
+          if (r.key === "ia_secours_key" && r.value)     cfg.iaSecoursKey     = r.value;
+          if (r.key === "ia_secours_model" && r.value)   cfg.iaSecoursModel   = r.value;
         });
       }
     } catch(e) { console.warn("[ouvrirConfigSecurisee] Turso:", e.message); }
@@ -2346,7 +2406,11 @@ async function ouvrirConfigSecurisee() {
   set("cfg-geminiKeyZip",     cfg.geminiKeyZip     || ancienneCleUnique);
   set("cfg-geminiKeyDoublon", cfg.geminiKeyDoublon || ancienneCleUnique);
   set("cfg-geminiKeyContrib", cfg.geminiKeyContrib || ancienneCleUnique);
+  set("cfg-geminiKeyQuizIA",  cfg.geminiKeyQuizIA  || ancienneCleUnique);
   set("cfg-deepseekKey",      cfg.deepseekKey || "");
+  set("cfg-iaSecoursUrl",     cfg.iaSecoursUrl || "");
+  set("cfg-iaSecoursKey",     cfg.iaSecoursKey || "");
+  set("cfg-iaSecoursModel",   cfg.iaSecoursModel || "");
   set("cfg-adminPhone",     localStorage.getItem("userPhone") || "");
   // Ne pas pré-remplir le mot de passe (sécurité), juste indiquer s'il est déjà défini
   const pwdInput = document.getElementById("cfg-adminPassword");
@@ -2377,7 +2441,11 @@ async function sauvegarderConfigSecurisee() {
     geminiKeyZip:     get("cfg-geminiKeyZip"),
     geminiKeyDoublon: get("cfg-geminiKeyDoublon"),
     geminiKeyContrib: get("cfg-geminiKeyContrib"),
+    geminiKeyQuizIA:  get("cfg-geminiKeyQuizIA"),
     deepseekKey:      get("cfg-deepseekKey"),
+    iaSecoursUrl:     get("cfg-iaSecoursUrl"),
+    iaSecoursKey:     get("cfg-iaSecoursKey"),
+    iaSecoursModel:   get("cfg-iaSecoursModel"),
   };
   const adminPhone = get("cfg-adminPhone");
   const adminPassword = get("cfg-adminPassword");
@@ -2406,7 +2474,11 @@ async function sauvegarderConfigSecurisee() {
         ["gemini_zip",     cfg.geminiKeyZip],
         ["gemini_doublon", cfg.geminiKeyDoublon],
         ["gemini_contrib", cfg.geminiKeyContrib],
+        ["gemini_quizia",  cfg.geminiKeyQuizIA],
         ["deepseek_key",   cfg.deepseekKey],
+        ["ia_secours_url",   cfg.iaSecoursUrl],
+        ["ia_secours_key",   cfg.iaSecoursKey],
+        ["ia_secours_model", cfg.iaSecoursModel],
       ];
       for (const [key, value] of _settingsToSave) {
         if (value) {
@@ -2418,8 +2490,12 @@ async function sauvegarderConfigSecurisee() {
   GEMINI_KEYS_ZIP      = _parseGeminiKeys(cfg.geminiKeyZip);
   GEMINI_KEYS_DOUBLON  = _parseGeminiKeys(cfg.geminiKeyDoublon);
   GEMINI_KEYS_CONTRIB  = _parseGeminiKeys(cfg.geminiKeyContrib);
+  GEMINI_KEYS_QUIZIA   = _parseGeminiKeys(cfg.geminiKeyQuizIA);
   GEMINI_API_KEY       = GEMINI_KEYS_ZIP[0] || "";
   DEEPSEEK_API_KEY      = cfg.deepseekKey || "";
+  IA_SECOURS_URL         = cfg.iaSecoursUrl   || "";
+  IA_SECOURS_KEY         = cfg.iaSecoursKey   || "";
+  IA_SECOURS_MODEL       = cfg.iaSecoursModel || "";
   // Mettre à jour _embeddedCfg en mémoire pour éviter rechargement
   _embeddedCfg = cfg;
   // ── Double persistance : localStorage (cache immédiat) + Turso (source de vérité) ──
@@ -2430,7 +2506,11 @@ async function sauvegarderConfigSecurisee() {
   if (cfg.geminiKeyZip)     localStorage.setItem("_lu_gemini_zip",     cfg.geminiKeyZip);
   if (cfg.geminiKeyDoublon) localStorage.setItem("_lu_gemini_doublon", cfg.geminiKeyDoublon);
   if (cfg.geminiKeyContrib) localStorage.setItem("_lu_gemini_contrib", cfg.geminiKeyContrib);
+  if (cfg.geminiKeyQuizIA)  localStorage.setItem("_lu_gemini_quizia",  cfg.geminiKeyQuizIA);
   if (cfg.deepseekKey)      localStorage.setItem("_lu_deepseek_key",   cfg.deepseekKey);
+  if (cfg.iaSecoursUrl)     localStorage.setItem("_lu_ia_secours_url",   cfg.iaSecoursUrl);
+  if (cfg.iaSecoursKey)     localStorage.setItem("_lu_ia_secours_key",   cfg.iaSecoursKey);
+  if (cfg.iaSecoursModel)   localStorage.setItem("_lu_ia_secours_model", cfg.iaSecoursModel);
   // Réinitialiser Turso avec les nouveaux tokens
   if (cfg.tursoUrl && cfg.tursoToken) {
     try { turso = createClient({ url: cfg.tursoUrl, authToken: cfg.tursoToken }); } catch(e) {}
@@ -2814,6 +2894,225 @@ async function loadAdminStats() {
     const contribTotal = await turso.execute({ sql: "SELECT COUNT(*) as n FROM contributions", args: [] });
     document.getElementById("adminStatContrib").textContent = contribTotal.rows[0]?.n || 0;
   } catch(e) {}
+}
+
+// ========== SUIVI D'ACTIVITÉ (ouvertures de l'app) ==========
+// Enregistre au maximum une ouverture par utilisateur et par jour (évite de saturer la table)
+async function enregistrerOuvertureApp() {
+  if (!turso) return;
+  try {
+    const phone = localStorage.getItem("userPhone") || "";
+    const jour = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+    const cleLocale = "_dernierJourOuverture_" + (phone || "anonyme");
+    if (localStorage.getItem(cleLocale) === jour) return; // déjà compté aujourd'hui sur cet appareil
+    await turso.execute({ sql: "INSERT INTO app_opens (phone, jour, date) VALUES (?, ?, ?)", args: [phone, jour, Date.now()] });
+    localStorage.setItem(cleLocale, jour);
+  } catch(e) {}
+}
+
+// ========== NOTIFICATIONS DIFFUSÉES PAR L'ADMIN ==========
+// Récupère les notifications écrites par l'admin dans le tableau de bord et les ajoute
+// à la liste de notifications locale de CHAQUE utilisateur (comme une notification normale).
+async function syncBroadcastNotifsDepuisTurso() {
+  if (!turso) return;
+  try {
+    const dernierId = parseInt(localStorage.getItem("_dernierBroadcastId") || "0", 10);
+    const res = await turso.execute({ sql: "SELECT id, titre, message FROM broadcast_notifications WHERE id > ? ORDER BY id ASC", args: [dernierId] });
+    const lignes = res.rows || [];
+    if (!lignes.length) return;
+    lignes.forEach(r => addNotification("📢 " + r.titre, r.message, "success"));
+    const maxId = Math.max(...lignes.map(r => Number(r.id)));
+    localStorage.setItem("_dernierBroadcastId", String(maxId));
+  } catch(e) {}
+}
+
+// ========== TABLEAU DE BORD ADMIN COMPLET ==========
+async function ouvrirTableauDeBordAdmin() {
+  const caller = localStorage.getItem("userPhone") || "";
+  const isAdmin = await isAdminPhone(caller);
+  if (!isAdmin) { showToast("⛔ Réservé à l'administrateur", "error"); return; }
+  if (!turso) { showToast("⚠️ Base non connectée", "error"); return; }
+
+  const existing = document.getElementById("dashboardAdminModal");
+  if (existing) existing.remove();
+
+  const modal = document.createElement("div");
+  modal.id = "dashboardAdminModal";
+  modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:99999;display:flex;align-items:flex-end;justify-content:center";
+
+  const sheet = document.createElement("div");
+  sheet.style.cssText = "background:white;border-radius:20px 20px 0 0;width:100%;max-width:460px;max-height:92vh;display:flex;flex-direction:column";
+
+  const header = document.createElement("div");
+  header.style.cssText = "padding:20px 20px 12px;border-bottom:1px solid #f0f0f0;display:flex;align-items:center;justify-content:space-between";
+  header.innerHTML = '<div style="font-weight:900;font-size:16px;color:#0369A1">📊 Tableau de bord — Évolution de l\'app</div>';
+  const btnX = document.createElement("button");
+  btnX.textContent = "✕";
+  btnX.style.cssText = "background:#f0f0f0;border:none;border-radius:50%;width:32px;height:32px;font-size:14px;cursor:pointer;font-weight:900;flex-shrink:0;margin-left:10px";
+  btnX.onclick = function() { modal.remove(); };
+  header.appendChild(btnX);
+  sheet.appendChild(header);
+
+  const body = document.createElement("div");
+  body.id = "dashboardAdminBody";
+  body.style.cssText = "padding:16px 20px;overflow-y:auto;flex:1";
+  body.innerHTML = `<div class="empty-state pulse">⏳ Chargement des statistiques...</div>`;
+  sheet.appendChild(body);
+
+  modal.appendChild(sheet);
+  document.body.appendChild(modal);
+
+  await _rafraichirTableauDeBordAdmin();
+}
+
+async function _rafraichirTableauDeBordAdmin() {
+  const body = document.getElementById("dashboardAdminBody");
+  if (!body) return;
+
+  try {
+    // 1) Statistiques globales
+    const nbUsers = (await turso.execute({ sql: "SELECT COUNT(*) as n FROM users", args: [] })).rows[0]?.n || 0;
+    const nbOuverturesTotal = (await turso.execute({ sql: "SELECT COUNT(*) as n FROM app_opens", args: [] })).rows[0]?.n || 0;
+    const nbPremium = (await turso.execute({ sql: "SELECT COUNT(*) as n FROM users WHERE is_premium = 1", args: [] })).rows[0]?.n || 0;
+
+    // 2) Ouvertures par jour (14 derniers jours) → petit graphe en barres
+    const resJours = await turso.execute({ sql: "SELECT jour, COUNT(*) as n FROM app_opens GROUP BY jour ORDER BY jour DESC LIMIT 14", args: [] });
+    const parJour = (resJours.rows || []).slice().reverse(); // du plus ancien au plus récent
+
+    // 3) Pseudos (pour affichage lisible plutôt que juste des numéros)
+    const pseudos = {};
+    try {
+      const resPseudo = await turso.execute({ sql: "SELECT phone, pseudo FROM utilisateurs WHERE pseudo IS NOT NULL AND pseudo != ''", args: [] });
+      (resPseudo.rows || []).forEach(r => { pseudos[r.phone] = r.pseudo; });
+    } catch(e) {}
+
+    // 4) Utilisateurs les plus actifs (les plus d'ouvertures enregistrées)
+    const resActifs = await turso.execute({ sql: "SELECT phone, COUNT(*) as n FROM app_opens WHERE phone != '' GROUP BY phone ORDER BY n DESC LIMIT 5", args: [] });
+    const actifs = (resActifs.rows || []).map(r => ({ phone: r.phone, n: Number(r.n), nom: pseudos[r.phone] || r.phone }));
+    const leaderPhone = actifs[0]?.phone || "";
+    const leaderNom = actifs[0]?.nom || "";
+
+    // 5) Historique des notifications déjà diffusées
+    const resNotifs = await turso.execute({ sql: "SELECT id, titre, message, date FROM broadcast_notifications ORDER BY id DESC LIMIT 20", args: [] });
+    const notifsDiffusees = resNotifs.rows || [];
+
+    body.innerHTML = `
+      <div class="admin-stats-grid" style="margin-bottom:16px">
+        <div class="stat-card"><div class="num">${nbUsers}</div><div class="lbl">Utilisateurs</div></div>
+        <div class="stat-card blue"><div class="num">${nbOuverturesTotal}</div><div class="lbl">Ouvertures (total)</div></div>
+        <div class="stat-card gold"><div class="num">${nbPremium}</div><div class="lbl">Premium actifs</div></div>
+      </div>
+
+      <div style="font-size:12px;font-weight:800;color:#374151;margin-bottom:6px">📈 Ouvertures de l'app — 14 derniers jours</div>
+      <div id="dashChart" style="display:flex;align-items:flex-end;gap:3px;height:110px;background:#F9FAFB;border:1px solid #eee;border-radius:12px;padding:8px 6px 4px;margin-bottom:18px">
+        ${_dashboardBarChartHTML(parJour)}
+      </div>
+
+      <div style="font-size:12px;font-weight:800;color:#374151;margin-bottom:6px">🏆 Utilisateurs les plus actifs</div>
+      <div style="margin-bottom:18px">
+        ${actifs.length ? actifs.map((a,i) => `
+          <div style="display:flex;align-items:center;justify-content:space-between;background:${i===0 ? 'linear-gradient(135deg,#FEF3C7,#FDE68A)' : '#F9FAFB'};border:1px solid #eee;border-radius:10px;padding:9px 12px;margin-bottom:6px;font-size:12.5px">
+            <span style="font-weight:700">${i===0 ? "🥇 " : (i===1 ? "🥈 " : (i===2 ? "🥉 " : "•️ "))}${esc(a.nom)}</span>
+            <span style="font-weight:800;color:#0369A1">${a.n} ouverture${a.n>1?"s":""}</span>
+          </div>`).join("") : `<div class="empty-state" style="padding:14px 0;font-size:12px">Pas encore de données d'activité.</div>`}
+      </div>
+
+      ${leaderPhone ? `
+      <button class="admin-action-btn gold" id="btnRecompenserActif" style="margin-bottom:20px">🎁 Offrir 1 mois Premium à ${esc(leaderNom)} (le plus actif) + notifier tout le monde</button>
+      ` : ""}
+
+      <div style="font-size:12px;font-weight:800;color:#374151;margin-bottom:6px">📣 Écrire une notification pour TOUS les utilisateurs</div>
+      <input id="dash-notif-titre" class="input" placeholder="Titre (ex: 🎉 Bonne nouvelle)" style="margin-bottom:8px">
+      <textarea id="dash-notif-message" class="input" placeholder="Message qui s'affichera chez tous les utilisateurs..." style="height:80px;resize:none;margin-bottom:8px"></textarea>
+      <button class="admin-action-btn" id="btnEnvoyerNotifDash" style="background:linear-gradient(135deg,#0EA5E9,#0369A1);margin-bottom:20px">📤 Envoyer à tous les utilisateurs</button>
+
+      <div style="font-size:12px;font-weight:800;color:#374151;margin-bottom:6px">🕓 Notifications déjà envoyées</div>
+      <div id="dash-notifs-historique">
+        ${notifsDiffusees.length ? notifsDiffusees.map(n => `
+          <div style="background:#F9FAFB;border:1px solid #eee;border-radius:10px;padding:9px 12px;margin-bottom:6px;font-size:12px;position:relative">
+            <div style="font-weight:800;color:#0369A1">${esc(n.titre)}</div>
+            <div style="color:#444;margin:3px 0">${esc(n.message)}</div>
+            <div style="color:#999;font-size:10px;display:flex;align-items:center;justify-content:space-between">
+              <span>${formatRelativeTime(Number(n.date))}</span>
+              <button data-notif-id="${n.id}" class="btnSupprNotifDash" style="background:none;border:none;color:#DC2626;font-weight:700;cursor:pointer;font-size:11px">🗑️ Supprimer</button>
+            </div>
+          </div>`).join("") : `<div class="empty-state" style="padding:14px 0;font-size:12px">Aucune notification envoyée pour l'instant.</div>`}
+      </div>
+    `;
+
+    const btnEnvoyer = document.getElementById("btnEnvoyerNotifDash");
+    if (btnEnvoyer) btnEnvoyer.onclick = _envoyerNotificationBroadcast;
+    const btnRecompenser = document.getElementById("btnRecompenserActif");
+    if (btnRecompenser) btnRecompenser.onclick = () => _recompenserUtilisateurActif(leaderPhone, leaderNom);
+    document.querySelectorAll(".btnSupprNotifDash").forEach(btn => {
+      btn.onclick = () => _supprimerNotificationBroadcast(btn.getAttribute("data-notif-id"));
+    });
+  } catch(e) {
+    body.innerHTML = `<div class="empty-state" style="color:#c62828">❌ Erreur de chargement des statistiques : ${esc(e.message || String(e))}</div>`;
+  }
+}
+
+// Petit graphe en barres (HTML/CSS pur, pas de librairie externe)
+function _dashboardBarChartHTML(parJour) {
+  if (!parJour.length) return `<div style="width:100%;text-align:center;color:#999;font-size:11px;align-self:center">Pas encore de données</div>`;
+  const max = Math.max(...parJour.map(j => Number(j.n)), 1);
+  return parJour.map(j => {
+    const hauteur = Math.max(4, Math.round((Number(j.n) / max) * 95));
+    const jourCourt = (j.jour || "").slice(5).replace("-", "/"); // "MM/JJ"
+    return `
+      <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%">
+        <div title="${esc(j.jour)} : ${j.n} ouverture(s)" style="width:100%;max-width:16px;height:${hauteur}%;background:linear-gradient(180deg,#38BDF8,#0369A1);border-radius:4px 4px 0 0"></div>
+        <div style="font-size:8px;color:#999;margin-top:3px;white-space:nowrap">${jourCourt}</div>
+      </div>`;
+  }).join("");
+}
+
+async function _envoyerNotificationBroadcast() {
+  const titreEl = document.getElementById("dash-notif-titre");
+  const messageEl = document.getElementById("dash-notif-message");
+  const titre = (titreEl?.value || "").trim();
+  const message = (messageEl?.value || "").trim();
+  if (!titre || !message) { showToast("❌ Titre et message obligatoires", "error"); return; }
+  const auteur = localStorage.getItem("userPhone") || "";
+  try {
+    await turso.execute({ sql: "INSERT INTO broadcast_notifications (titre, message, auteur, date) VALUES (?, ?, ?, ?)", args: [titre, message, auteur, Date.now()] });
+    showToast("📤 Notification envoyée à tous les utilisateurs", "success");
+    if (titreEl) titreEl.value = "";
+    if (messageEl) messageEl.value = "";
+    // L'admin voit aussi apparaître sa propre notification (comme les autres utilisateurs)
+    await syncBroadcastNotifsDepuisTurso();
+    await _rafraichirTableauDeBordAdmin();
+  } catch(e) {
+    showToast("❌ Erreur d'envoi : " + e.message, "error");
+  }
+}
+
+async function _supprimerNotificationBroadcast(id) {
+  if (!window.confirm("Supprimer cette notification de l'historique ? (elle restera visible chez ceux qui l'ont déjà reçue)")) return;
+  try {
+    await turso.execute({ sql: "DELETE FROM broadcast_notifications WHERE id = ?", args: [id] });
+    showToast("🗑️ Notification supprimée", "success");
+    await _rafraichirTableauDeBordAdmin();
+  } catch(e) {
+    showToast("❌ Erreur : " + e.message, "error");
+  }
+}
+
+async function _recompenserUtilisateurActif(phone, nom) {
+  if (!phone) return;
+  const ok = window.confirm(`Offrir 1 mois Premium gratuit à ${nom} (${phone}) et notifier tous les utilisateurs ?`);
+  if (!ok) return;
+  const resultat = await _accorderPremiumParTelephone(phone, 30);
+  if (!resultat.ok) { showToast("❌ " + resultat.message, "error"); return; }
+  const titre = "🎉 Utilisateur du moment";
+  const message = `${nom} a reçu 1 mois Premium gratuit car il/elle est l'utilisateur le plus actif de l'app !`;
+  const auteur = localStorage.getItem("userPhone") || "";
+  try {
+    await turso.execute({ sql: "INSERT INTO broadcast_notifications (titre, message, auteur, date) VALUES (?, ?, ?, ?)", args: [titre, message, auteur, Date.now()] });
+  } catch(e) {}
+  showToast(`⭐ Premium offert à ${nom} + notification envoyée`, "success");
+  await syncBroadcastNotifsDepuisTurso();
+  await _rafraichirTableauDeBordAdmin();
 }
 
 async function ajouterModerateur() {

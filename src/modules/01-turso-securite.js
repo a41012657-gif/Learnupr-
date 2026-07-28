@@ -2413,6 +2413,7 @@ function switchModoTab(tab, btn) {
   if (tab === "contenu") chargerContenuPublieModo();
   if (tab === "ajouter") initModoSelects();
   if (tab === "quiz") { renderQuizAdminList(); initQuizSelects(); }
+  if (tab === "quizia") chargerQuizIAPending();
   if (tab === "zip") {
     // Charger JSZip à l'ouverture si pas encore chargé
     if (!window.JSZip) chargerJSZip().catch(() => {});
