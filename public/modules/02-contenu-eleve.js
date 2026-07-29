@@ -1046,6 +1046,13 @@ function quizUpdateChapitres() {
 const QUIZ_IA_DAILY_MAX = 3;
 const QUIZ_IA_NB_QUESTIONS = 6;
 
+// Mode de génération : "texte" (sujet libre) ou "photo" (photo du cours prise/choisie
+// par l'élève, lue par l'IA multimodale). _quizIAPhotoBase64/_quizIAPhotoMime ne
+// contiennent jamais la data URL complète, seulement les données utiles à l'appel API.
+let _quizIAMode = "texte";
+let _quizIAPhotoBase64 = null;
+let _quizIAPhotoMime = null;
+
 function _quizIACompteurAujourdhui() {
   const today = new Date().toLocaleDateString("fr-FR");
   const stored = JSON.parse(localStorage.getItem("quizIADailyCount") || "{}");
@@ -1085,11 +1092,64 @@ function ouvrirGenerateurQuizIA() {
   if (statusEl) statusEl.style.display = "none";
   document.getElementById("quizia-chapitre").value = "";
   document.getElementById("quizia-sujet").value = "";
+  quizIABasculerMode("texte");
+  quizIARetirerPhoto();
   document.getElementById("quizIAGenModal")?.classList.add("show");
 }
 
 function fermerGenerateurQuizIA() {
   document.getElementById("quizIAGenModal")?.classList.remove("show");
+}
+
+// ── Bascule entre les deux modes de génération (sujet texte / photo du cours) ──
+function quizIABasculerMode(mode) {
+  _quizIAMode = (mode === "photo") ? "photo" : "texte";
+  const zoneTexte = document.getElementById("quizia-zone-texte");
+  const zonePhoto = document.getElementById("quizia-zone-photo");
+  const btnTexte  = document.getElementById("quizia-mode-texte");
+  const btnPhoto  = document.getElementById("quizia-mode-photo");
+  if (zoneTexte) zoneTexte.style.display = (_quizIAMode === "texte") ? "block" : "none";
+  if (zonePhoto) zonePhoto.style.display = (_quizIAMode === "photo") ? "block" : "none";
+  if (btnTexte) { btnTexte.style.background = (_quizIAMode === "texte") ? "var(--p)" : "var(--card)"; btnTexte.style.color = (_quizIAMode === "texte") ? "white" : "var(--t1)"; }
+  if (btnPhoto) { btnPhoto.style.background = (_quizIAMode === "photo") ? "var(--p)" : "var(--card)"; btnPhoto.style.color = (_quizIAMode === "photo") ? "white" : "var(--t1)"; }
+}
+
+// ── Lecture de la photo choisie/prise par l'élève, convertie en base64 pour l'IA ──
+async function quizIAChoisirPhoto(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  if (!file.type || !file.type.startsWith("image/")) {
+    showToast("❌ Choisis une image (JPG/PNG)", "error");
+    input.value = "";
+    return;
+  }
+  try {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload  = () => resolve(r.result);
+      r.onerror = reject;
+      r.readAsDataURL(file);
+    });
+    _quizIAPhotoMime = file.type;
+    _quizIAPhotoBase64 = (dataUrl.split(",")[1]) || "";
+    const preview = document.getElementById("quizia-photo-preview");
+    if (preview) { preview.src = dataUrl; preview.style.display = "block"; }
+    const label = document.getElementById("quizia-photo-label");
+    if (label) label.textContent = `📷 Photo choisie — ${file.name}`;
+  } catch(e) {
+    showToast("❌ Impossible de lire cette photo, réessaie", "error");
+  }
+}
+
+function quizIARetirerPhoto() {
+  _quizIAPhotoBase64 = null;
+  _quizIAPhotoMime = null;
+  const input = document.getElementById("quizia-photo");
+  if (input) input.value = "";
+  const preview = document.getElementById("quizia-photo-preview");
+  if (preview) { preview.removeAttribute("src"); preview.style.display = "none"; }
+  const label = document.getElementById("quizia-photo-label");
+  if (label) label.textContent = "Prendre une photo ou choisir une image";
 }
 
 function quizIAUpdateMatieres() {
@@ -1119,8 +1179,10 @@ async function genererQuizIA() {
   const mat      = document.getElementById("quizia-matiere")?.value || "";
   const chapitre = document.getElementById("quizia-chapitre")?.value?.trim() || "";
   const sujet    = document.getElementById("quizia-sujet")?.value?.trim() || "";
+  const modePhoto = (_quizIAMode === "photo");
   if (!classe) { showToast("❌ Choisis la classe", "error"); return; }
   if (!mat)    { showToast("❌ Choisis la matière", "error"); return; }
+  if (modePhoto && !_quizIAPhotoBase64) { showToast("❌ Prends ou choisis d'abord une photo de ton cours", "error"); return; }
 
   const btn = document.getElementById("quizIAGenBtn");
   const statusEl = document.getElementById("quizIAGenStatus");
@@ -1128,23 +1190,29 @@ async function genererQuizIA() {
   if (statusEl) {
     statusEl.style.display = "block";
     statusEl.style.background = "var(--bg)"; statusEl.style.color = "var(--t2)";
-    statusEl.textContent = "🤖 L'IA prépare tes questions, patiente quelques secondes...";
+    statusEl.textContent = modePhoto
+      ? "🤖 L'IA lit le contenu de ta photo et prépare tes questions, patiente quelques secondes..."
+      : "🤖 L'IA prépare tes questions, patiente quelques secondes...";
   }
 
   try {
-    const prompt = _construirePromptQuizIA(classe, mat, chapitre, sujet, QUIZ_IA_NB_QUESTIONS);
-    const { texte, fournisseur } = await _appelIAQuizFailover(prompt);
+    const prompt = _construirePromptQuizIA(classe, mat, chapitre, sujet, QUIZ_IA_NB_QUESTIONS, modePhoto);
+    const imageData = modePhoto ? { mimeType: _quizIAPhotoMime, base64: _quizIAPhotoBase64 } : null;
+    const { texte, fournisseur } = await _appelIAQuizFailover(prompt, imageData);
     const questions = _parserQuestionsQuizIA(texte);
-    if (!questions.length) throw new Error("L'IA n'a renvoyé aucune question exploitable, réessaie.");
+    if (!questions.length) throw new Error(modePhoto
+      ? "L'IA n'a pas trouvé de contenu de cours exploitable sur cette photo (image floue, illisible ou incomplète ?). Réessaie avec une photo plus nette et bien cadrée."
+      : "L'IA n'a renvoyé aucune question exploitable, réessaie.");
 
     // Sauvegarde en attente de validation modérateur — n'apparaît pas encore aux élèves
     let tursoId = null;
     if (turso) {
       try {
         await turso.execute({
-          sql: `INSERT INTO quiz_ia_pending (classe,matiere,chapitre,sujet,questions,fournisseur,auteur,statut,date) VALUES (?,?,?,?,?,?,?,?,?)`,
+          sql: `INSERT INTO quiz_ia_pending (classe,matiere,chapitre,sujet,questions,fournisseur,auteur,statut,date,source) VALUES (?,?,?,?,?,?,?,?,?,?)`,
           args: [classe, mat, chapitre, sujet, JSON.stringify(questions), fournisseur,
-                 localStorage.getItem("userPhone") || "élève", "attente", new Date().toLocaleDateString("fr-FR")]
+                 localStorage.getItem("userPhone") || "élève", "attente", new Date().toLocaleDateString("fr-FR"),
+                 modePhoto ? "photo" : "texte"]
         });
         const idRes = await turso.execute({ sql: "SELECT last_insert_rowid() as id", args: [] });
         tursoId = idRes.rows?.[0]?.id || null;

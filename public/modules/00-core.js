@@ -185,6 +185,11 @@ let DEEPSEEK_API_KEY = ""; // utilisée uniquement par l'outil de diagnostic adm
 let IA_SECOURS_URL   = ""; // ex: https://api.groq.com/openai/v1/chat/completions
 let IA_SECOURS_KEY   = "";
 let IA_SECOURS_MODEL = ""; // ex: llama-3.3-70b-versatile
+// ── Fournisseur de secours n°2, dédié au mode "photo de cours" du Quiz IA ──
+// Mistral (La Plateforme) a un vrai niveau gratuit et un modèle vision stable
+// (mistral-small-latest), endpoint fixe donc une seule clé à renseigner ici,
+// comme pour DeepSeek. Essayé après Gemini ET après le secours Groq/OpenAI.
+let MISTRAL_VISION_KEY = "";
 
 // ⚠️ SÉCURITÉ : ces identifiants permettent de SUPPRIMER des fichiers sur
 // Cloudinary. Ils sont volontairement codés en dur ici à la demande du
@@ -220,6 +225,7 @@ async function _initConfig() {
   IA_SECOURS_URL       = _cfg.iaSecoursUrl   || localStorage.getItem("_lu_ia_secours_url")   || "";
   IA_SECOURS_KEY       = _cfg.iaSecoursKey   || localStorage.getItem("_lu_ia_secours_key")   || "";
   IA_SECOURS_MODEL     = _cfg.iaSecoursModel || localStorage.getItem("_lu_ia_secours_model") || "";
+  MISTRAL_VISION_KEY   = _cfg.mistralVisionKey || localStorage.getItem("_lu_mistral_vision_key") || "";
 }
 
 function _appliquerVisibiliteTD() {
@@ -314,6 +320,7 @@ async function _chargerSettingsTurso() {
         if (r.key === "ia_secours_url" && r.value)   { IA_SECOURS_URL   = r.value; localStorage.setItem("_lu_ia_secours_url", r.value); }
         if (r.key === "ia_secours_key" && r.value)   { IA_SECOURS_KEY   = r.value; localStorage.setItem("_lu_ia_secours_key", r.value); }
         if (r.key === "ia_secours_model" && r.value) { IA_SECOURS_MODEL = r.value; localStorage.setItem("_lu_ia_secours_model", r.value); }
+        if (r.key === "mistral_vision_key" && r.value) { MISTRAL_VISION_KEY = r.value; localStorage.setItem("_lu_mistral_vision_key", r.value); }
         // Mot de passe admin — restaurer sur tout nouvel appareil admin
         if (r.key === "admin_pwd_hash" && r.value && !localStorage.getItem("adminPwdHash")) {
           localStorage.setItem("adminPwdHash", r.value);
@@ -368,6 +375,7 @@ if (localStorage.getItem("userRole") === "admin") {
   if (!IA_SECOURS_URL)   IA_SECOURS_URL   = localStorage.getItem("_lu_ia_secours_url")   || "";
   if (!IA_SECOURS_KEY)   IA_SECOURS_KEY   = localStorage.getItem("_lu_ia_secours_key")   || "";
   if (!IA_SECOURS_MODEL) IA_SECOURS_MODEL = localStorage.getItem("_lu_ia_secours_model") || "";
+  if (!MISTRAL_VISION_KEY) MISTRAL_VISION_KEY = localStorage.getItem("_lu_mistral_vision_key") || "";
 })();
 
 // ── Constantes IA Gemini / anti-doublons (déclarées ici, tout en haut, plutôt
@@ -822,6 +830,9 @@ async function initTurso() {
       statut TEXT DEFAULT 'attente',
       date TEXT DEFAULT ''
     )`, args: [] });
+    // Migration : distinguer les quiz IA générés à partir d'un sujet texte ("texte")
+    // de ceux générés à partir d'une photo de cours prise/choisie par l'élève ("photo")
+    try { await turso.execute({ sql: "ALTER TABLE quiz_ia_pending ADD COLUMN source TEXT DEFAULT 'texte'", args: [] }); } catch(e) {}
     try { await turso.execute({ sql: "ALTER TABLE contenu ADD COLUMN description TEXT DEFAULT ''", args: [] }); } catch(e) {}
     // Migration : chapitre des vidéos (permet de regrouper les vidéos par chapitre, comme les cours)
     try { await turso.execute({ sql: "ALTER TABLE contenu ADD COLUMN chapitre TEXT DEFAULT ''", args: [] }); } catch(e) {}
@@ -2389,6 +2400,7 @@ async function ouvrirConfigSecurisee() {
           if (r.key === "ia_secours_url" && r.value)     cfg.iaSecoursUrl     = r.value;
           if (r.key === "ia_secours_key" && r.value)     cfg.iaSecoursKey     = r.value;
           if (r.key === "ia_secours_model" && r.value)   cfg.iaSecoursModel   = r.value;
+          if (r.key === "mistral_vision_key" && r.value) cfg.mistralVisionKey = r.value;
         });
       }
     } catch(e) { console.warn("[ouvrirConfigSecurisee] Turso:", e.message); }
@@ -2411,6 +2423,7 @@ async function ouvrirConfigSecurisee() {
   set("cfg-iaSecoursUrl",     cfg.iaSecoursUrl || "");
   set("cfg-iaSecoursKey",     cfg.iaSecoursKey || "");
   set("cfg-iaSecoursModel",   cfg.iaSecoursModel || "");
+  set("cfg-mistralVisionKey", cfg.mistralVisionKey || "");
   set("cfg-adminPhone",     localStorage.getItem("userPhone") || "");
   // Ne pas pré-remplir le mot de passe (sécurité), juste indiquer s'il est déjà défini
   const pwdInput = document.getElementById("cfg-adminPassword");
@@ -2446,6 +2459,7 @@ async function sauvegarderConfigSecurisee() {
     iaSecoursUrl:     get("cfg-iaSecoursUrl"),
     iaSecoursKey:     get("cfg-iaSecoursKey"),
     iaSecoursModel:   get("cfg-iaSecoursModel"),
+    mistralVisionKey: get("cfg-mistralVisionKey"),
   };
   const adminPhone = get("cfg-adminPhone");
   const adminPassword = get("cfg-adminPassword");
@@ -2479,6 +2493,7 @@ async function sauvegarderConfigSecurisee() {
         ["ia_secours_url",   cfg.iaSecoursUrl],
         ["ia_secours_key",   cfg.iaSecoursKey],
         ["ia_secours_model", cfg.iaSecoursModel],
+        ["mistral_vision_key", cfg.mistralVisionKey],
       ];
       for (const [key, value] of _settingsToSave) {
         if (value) {
@@ -2496,6 +2511,7 @@ async function sauvegarderConfigSecurisee() {
   IA_SECOURS_URL         = cfg.iaSecoursUrl   || "";
   IA_SECOURS_KEY         = cfg.iaSecoursKey   || "";
   IA_SECOURS_MODEL       = cfg.iaSecoursModel || "";
+  MISTRAL_VISION_KEY     = cfg.mistralVisionKey || "";
   // Mettre à jour _embeddedCfg en mémoire pour éviter rechargement
   _embeddedCfg = cfg;
   // ── Double persistance : localStorage (cache immédiat) + Turso (source de vérité) ──
@@ -2511,6 +2527,7 @@ async function sauvegarderConfigSecurisee() {
   if (cfg.iaSecoursUrl)     localStorage.setItem("_lu_ia_secours_url",   cfg.iaSecoursUrl);
   if (cfg.iaSecoursKey)     localStorage.setItem("_lu_ia_secours_key",   cfg.iaSecoursKey);
   if (cfg.iaSecoursModel)   localStorage.setItem("_lu_ia_secours_model", cfg.iaSecoursModel);
+  if (cfg.mistralVisionKey) localStorage.setItem("_lu_mistral_vision_key", cfg.mistralVisionKey);
   // Réinitialiser Turso avec les nouveaux tokens
   if (cfg.tursoUrl && cfg.tursoToken) {
     try { turso = createClient({ url: cfg.tursoUrl, authToken: cfg.tursoToken }); } catch(e) {}

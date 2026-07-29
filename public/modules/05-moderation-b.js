@@ -3242,21 +3242,56 @@ async function _appelGeminiBrut(apiKey, parts, opts) {
 // Réservé aux membres Premium (bouton élève 🎬 Quiz IA). Essaie d'abord les clés
 // Gemini dédiées (rotation + retry si plusieurs sont configurées), puis bascule
 // automatiquement sur DeepSeek si Gemini est indisponible/en panne/quota dépassé.
+// imageData optionnel = { mimeType, base64 } pour le mode "photo de cours" (l'élève
+// prend/choisit une photo, l'IA multimodale lit son contenu pour générer le quiz).
 // Retourne { texte, fournisseur } ou lève une erreur si aucun fournisseur ne répond.
-async function _appelIAQuizFailover(promptTexte) {
+async function _appelIAQuizFailover(promptTexte, imageData) {
   const clesGemini = (GEMINI_KEYS_QUIZIA && GEMINI_KEYS_QUIZIA.length) ? GEMINI_KEYS_QUIZIA : GEMINI_KEYS_ZIP;
+  const parts = (imageData && imageData.base64)
+    ? [{ text: promptTexte }, { inline_data: { mime_type: imageData.mimeType || "image/jpeg", data: imageData.base64 } }]
+    : [{ text: promptTexte }];
   let derniereErreur = null;
   for (let i = 0; i < clesGemini.length; i++) {
     const cle = clesGemini[i];
     if (!cle) continue;
     try {
-      const texte = await _appelGeminiBrut(cle, [{ text: promptTexte }], { maxOutputTokens: 3500 });
+      const texte = await _appelGeminiBrut(cle, parts, { maxOutputTokens: 3500 });
       return { texte, fournisseur: "Gemini" };
     } catch(e) {
       derniereErreur = e;
       console.warn(`Quiz IA — échec Gemini (clé ${i + 1}/${clesGemini.length}):`, e.message);
       // On continue vers la clé suivante quelle que soit l'erreur (429, panne réseau, clé invalide...)
     }
+  }
+  // En mode photo, deux fournisseurs multimodaux de secours sont essayés dans
+  // l'ordre avant d'abandonner — tous deux ont un vrai niveau gratuit :
+  if (imageData && imageData.base64) {
+    // 1) Le secours générique (IA_SECOURS_*, typiquement Groq) — ne fonctionne
+    //    pour la photo QUE si l'admin y a configuré un modèle vision ; sinon
+    //    l'appel échouera proprement (le modèle texte ignorera/rejettera l'image)
+    //    et on passera au fournisseur suivant.
+    if (IA_SECOURS_URL && IA_SECOURS_KEY && IA_SECOURS_MODEL) {
+      try {
+        const texte = await _appelIACompatibleOpenAI(IA_SECOURS_URL, IA_SECOURS_KEY, IA_SECOURS_MODEL, promptTexte, imageData);
+        return { texte, fournisseur: "Groq (secours)" };
+      } catch(e) {
+        derniereErreur = e;
+        console.warn("Quiz IA photo — échec fournisseur de secours:", e.message);
+      }
+    }
+    // 2) Mistral (mistral-small-latest, vision) — fournisseur établi, clé dédiée
+    if (MISTRAL_VISION_KEY) {
+      try {
+        const texte = await _appelMistralVision(MISTRAL_VISION_KEY, promptTexte, imageData);
+        return { texte, fournisseur: "Mistral" };
+      } catch(e) {
+        derniereErreur = e;
+        console.warn("Quiz IA photo — échec Mistral:", e.message);
+      }
+    }
+    throw new Error(derniereErreur
+      ? `Lecture de la photo impossible sur tous les fournisseurs configurés (${derniereErreur.message}). Vérifie tes clés IA dans Paramètres (Gemini, secours Groq, Mistral).`
+      : "Aucune clé IA capable de lire une photo n'est configurée (Paramètres → clés Gemini Quiz IA, secours Groq avec modèle vision, ou clé Mistral).");
   }
   // 2) Repli automatique sur un fournisseur gratuit compatible OpenAI (Groq,
   //    OpenRouter, Mistral...) configuré par l'admin dans Paramètres
@@ -3287,13 +3322,22 @@ async function _appelIAQuizFailover(promptTexte) {
 // Appel générique à toute API compatible "OpenAI chat completions" (Groq,
 // OpenRouter, Mistral, DeepSeek, Together, Cerebras...). Beaucoup de ces
 // fournisseurs offrent un niveau gratuit — utilisé comme secours si Gemini échoue.
-async function _appelIACompatibleOpenAI(url, apiKey, model, promptTexte) {
+// imageData optionnel = { mimeType, base64 } : envoyée au format vision standard
+// OpenAI (content en tableau avec un bloc image_url). Ne fonctionne que si le
+// modèle configuré par l'admin est lui-même capable de lire des images.
+async function _appelIACompatibleOpenAI(url, apiKey, model, promptTexte, imageData) {
+  const content = (imageData && imageData.base64)
+    ? [
+        { type: "text", text: promptTexte },
+        { type: "image_url", image_url: { url: `data:${imageData.mimeType || "image/jpeg"};base64,${imageData.base64}` } }
+      ]
+    : promptTexte;
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
     body: JSON.stringify({
       model,
-      messages: [{ role: "user", content: promptTexte }],
+      messages: [{ role: "user", content }],
       temperature: 0.3,
       max_tokens: 3500
     })
@@ -3310,10 +3354,62 @@ async function _appelIACompatibleOpenAI(url, apiKey, model, promptTexte) {
   return texte;
 }
 
+// Appel dédié à Mistral pour le mode "photo de cours" — format de message vision
+// légèrement différent du standard OpenAI (image_url est une chaîne, pas un objet
+// {url}). Endpoint et modèle fixes (mistral-small-latest, documenté vision-capable).
+async function _appelMistralVision(apiKey, promptTexte, imageData) {
+  const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: "mistral-small-latest",
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: promptTexte },
+          { type: "image_url", image_url: `data:${imageData.mimeType || "image/jpeg"};base64,${imageData.base64}` }
+        ]
+      }],
+      temperature: 0.3,
+      max_tokens: 3500
+    })
+  });
+  if (!res.ok) {
+    const errTxt = await res.text().catch(() => "");
+    const err = new Error(`Mistral HTTP ${res.status}: ${errTxt.slice(0, 200)}`);
+    err.status = res.status;
+    throw err;
+  }
+  const data = await res.json();
+  let texte = data?.choices?.[0]?.message?.content || "";
+  texte = texte.replace(/```json|```/g, "").trim();
+  return texte;
+}
+
 // Construit le prompt de génération d'un quiz par IA — même exigence de rigueur
 // factuelle que l'analyse de documents, adaptée au programme scolaire camerounais.
-function _construirePromptQuizIA(classe, matiere, chapitre, sujet, nbQuestions) {
+// depuisPhoto=true : une image est jointe à l'appel (voir _appelIAQuizFailover),
+// le quiz doit alors se baser UNIQUEMENT sur le contenu visible de cette photo.
+function _construirePromptQuizIA(classe, matiere, chapitre, sujet, nbQuestions, depuisPhoto) {
   const matLabel = (typeof NOMS_MATIERES !== "undefined" && NOMS_MATIERES[matiere]) || matiere || "culture générale";
+
+  if (depuisPhoto) {
+    return `Tu es un professeur camerounais expérimenté qui prépare un quiz scolaire pour l'application éducative LearnUpr.
+
+Une photo d'un cours (cahier, manuel, fiche) est jointe à ce message, niveau scolaire "${classe || "non précisé"}", matière "${matLabel}"${chapitre ? `, chapitre indiqué par l'élève : "${chapitre}"` : ""}${sujet ? `, précision de l'élève : "${sujet}"` : ""}.
+
+INSTRUCTION PRINCIPALE : Lis attentivement le contenu visible sur la photo (texte du cours, définitions, exemples, énoncés d'exercices, schémas légendés) et génère exactement ${nbQuestions} questions à choix multiples (QCM) portant UNIQUEMENT sur ce contenu.
+- N'invente aucune notion absente de la photo.
+- Si la photo est trop floue, illisible, vide, ou ne contient pas de contenu scolaire exploitable, réponds EXACTEMENT avec un tableau JSON vide : []
+
+RÈGLES STRICTES (si des questions sont possibles) :
+- Chaque question a exactement 4 choix, une seule bonne réponse.
+- Questions factuellement exactes, non ambiguës, fidèles au contenu réel de la photo.
+- Réponds STRICTEMENT avec un tableau JSON, sans aucun texte avant/après, sans balises markdown, format exact :
+[{"q":"texte de la question","c":["choix A","choix B","choix C","choix D"],"r":0,"explication":"courte explication (1 phrase) de la bonne réponse"}]
+- "r" est l'INDEX entier (0 à 3) du bon choix dans le tableau "c".`;
+  }
+
   return `Tu es un professeur camerounais expérimenté qui prépare un quiz scolaire pour l'application éducative LearnUpr.
 
 Génère exactement ${nbQuestions} questions à choix multiples (QCM), niveau scolaire "${classe || "non précisé"}", matière "${matLabel}"${chapitre ? `, chapitre "${chapitre}"` : ""}${sujet ? `, sur le sujet précis suivant : "${sujet}"` : ""}.
@@ -3373,6 +3469,7 @@ function renderQuizIAPendingList() {
   list.innerHTML = _quizIAPendingCache.map(item => `
     <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:10px">
       <div style="font-weight:800;font-size:13px;color:var(--p);margin-bottom:4px">🎬 ${item.classe || "Classe ?"} · ${(typeof NOMS_MATIERES!=='undefined' && NOMS_MATIERES[item.matiere]) || item.matiere || "Matière ?"}${item.chapitre ? " · " + item.chapitre : ""}</div>
+      ${item.source === "photo" ? `<div style="display:inline-block;font-size:10px;font-weight:800;color:#065F46;background:linear-gradient(135deg,#d1fae5,#ecfdf5);border-radius:8px;padding:3px 8px;margin-bottom:4px">📷 Généré à partir d'une photo de cours</div>` : ""}
       ${item.sujet ? `<div style="font-size:11px;color:var(--t2);margin-bottom:4px">📝 Sujet demandé : ${item.sujet}</div>` : ""}
       <div style="font-size:10px;color:var(--t3)">👤 ${item.auteur || "élève"} · ${item.date || ""} · ${item.questions.length} question(s) · via ${item.fournisseur || "IA"}</div>
       <div style="display:flex;gap:6px;margin-top:10px">
