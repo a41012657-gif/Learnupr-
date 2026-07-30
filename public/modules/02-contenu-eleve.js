@@ -1053,6 +1053,85 @@ let _quizIAMode = "texte";
 let _quizIAPhotoBase64 = null;
 let _quizIAPhotoMime = null;
 
+// ── Classement automatique des chapitres (évite les doublons quasi-identiques) ──
+// Compare le chapitre saisi par l'élève aux chapitres déjà présents dans la
+// banque de questions (table quiz_questions) pour la même classe/matière. Si
+// la ressemblance dépasse 70%, on réutilise le nom existant tel quel plutôt
+// que de créer un nouveau chapitre légèrement différent (ex: "Les fractions"
+// vs "fraction" vs "Fractions" doivent tomber dans le même chapitre).
+function _normaliserTexteChapitre(s) {
+  return (s || "")
+    .toString()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // enlève les accents
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+function _levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const curr = [i];
+    for (let j = 1; j <= n; j++) {
+      const cout = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cout);
+    }
+    prev = curr;
+  }
+  return prev[n];
+}
+function _similariteChapitre(a, b) {
+  const na = _normaliserTexteChapitre(a), nb = _normaliserTexteChapitre(b);
+  if (!na || !nb) return 0;
+  if (na === nb) return 1;
+  const maxLen = Math.max(na.length, nb.length);
+  return maxLen === 0 ? 1 : 1 - (_levenshtein(na, nb) / maxLen);
+}
+async function _normaliserChapitreIA(classe, matiere, chapitreSaisi) {
+  const saisi = (chapitreSaisi || "").trim();
+  if (!saisi || !turso) return saisi;
+  try {
+    const res = await turso.execute({
+      sql: "SELECT DISTINCT chapitre FROM quiz_questions WHERE classe=? AND matiere=? AND chapitre <> ''",
+      args: [classe, matiere]
+    });
+    let meilleur = null, meilleurScore = 0;
+    for (const row of (res.rows || [])) {
+      const score = _similariteChapitre(saisi, row.chapitre);
+      if (score > meilleurScore) { meilleurScore = score; meilleur = row.chapitre; }
+    }
+    if (meilleur && meilleurScore >= 0.70) return meilleur;
+  } catch(e) { console.warn("Normalisation chapitre — erreur:", e.message); }
+  return saisi;
+}
+
+// ── Compression photo côté élève avant envoi à l'IA ──────────────────────
+// Réduit nettement le temps d'upload (utile sur connexion lente) et le temps
+// d'analyse côté IA (image plus légère = traitement plus rapide), sans perte
+// visible pour un contenu de cours (texte/schémas/exercices).
+function _quizIACompresserImage(dataUrl, maxDim = 1400, quality = 0.72) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        const ratio = Math.min(maxDim / width, maxDim / height);
+        width = Math.round(width * ratio);
+        height = Math.round(height * ratio);
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width; canvas.height = height;
+      canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+      resolve({ dataUrl: canvas.toDataURL("image/jpeg", quality), mime: "image/jpeg" });
+    };
+    img.onerror = () => reject(new Error("image illisible"));
+    img.src = dataUrl;
+  });
+}
+
 function _quizIACompteurAujourdhui() {
   const today = new Date().toLocaleDateString("fr-FR");
   const stored = JSON.parse(localStorage.getItem("quizIADailyCount") || "{}");
@@ -1114,7 +1193,7 @@ function quizIABasculerMode(mode) {
   if (btnPhoto) { btnPhoto.style.background = (_quizIAMode === "photo") ? "var(--p)" : "var(--card)"; btnPhoto.style.color = (_quizIAMode === "photo") ? "white" : "var(--t1)"; }
 }
 
-// ── Lecture de la photo choisie/prise par l'élève, convertie en base64 pour l'IA ──
+// ── Lecture de la photo choisie/prise par l'élève, compressée puis convertie en base64 pour l'IA ──
 async function quizIAChoisirPhoto(input) {
   const file = input.files && input.files[0];
   if (!file) return;
@@ -1123,6 +1202,8 @@ async function quizIAChoisirPhoto(input) {
     input.value = "";
     return;
   }
+  const label = document.getElementById("quizia-photo-label");
+  if (label) label.textContent = "⏳ Préparation de la photo...";
   try {
     const dataUrl = await new Promise((resolve, reject) => {
       const r = new FileReader();
@@ -1130,13 +1211,14 @@ async function quizIAChoisirPhoto(input) {
       r.onerror = reject;
       r.readAsDataURL(file);
     });
-    _quizIAPhotoMime = file.type;
-    _quizIAPhotoBase64 = (dataUrl.split(",")[1]) || "";
+    const compresse = await _quizIACompresserImage(dataUrl);
+    _quizIAPhotoMime = compresse.mime;
+    _quizIAPhotoBase64 = (compresse.dataUrl.split(",")[1]) || "";
     const preview = document.getElementById("quizia-photo-preview");
-    if (preview) { preview.src = dataUrl; preview.style.display = "block"; }
-    const label = document.getElementById("quizia-photo-label");
-    if (label) label.textContent = `📷 Photo choisie — ${file.name}`;
+    if (preview) { preview.src = compresse.dataUrl; preview.style.display = "block"; }
+    if (label) label.textContent = `📷 Photo prête — ${file.name}`;
   } catch(e) {
+    if (label) label.textContent = "Prendre une photo ou choisir une image";
     showToast("❌ Impossible de lire cette photo, réessaie", "error");
   }
 }
@@ -1144,8 +1226,10 @@ async function quizIAChoisirPhoto(input) {
 function quizIARetirerPhoto() {
   _quizIAPhotoBase64 = null;
   _quizIAPhotoMime = null;
-  const input = document.getElementById("quizia-photo");
-  if (input) input.value = "";
+  const inputCam = document.getElementById("quizia-photo-cam");
+  const inputGal = document.getElementById("quizia-photo-gal");
+  if (inputCam) inputCam.value = "";
+  if (inputGal) inputGal.value = "";
   const preview = document.getElementById("quizia-photo-preview");
   if (preview) { preview.removeAttribute("src"); preview.style.display = "none"; }
   const label = document.getElementById("quizia-photo-label");
@@ -1177,12 +1261,17 @@ async function genererQuizIA() {
   }
   const classe   = document.getElementById("quizia-classe")?.value || "";
   const mat      = document.getElementById("quizia-matiere")?.value || "";
-  const chapitre = document.getElementById("quizia-chapitre")?.value?.trim() || "";
+  let   chapitre = document.getElementById("quizia-chapitre")?.value?.trim() || "";
   const sujet    = document.getElementById("quizia-sujet")?.value?.trim() || "";
   const modePhoto = (_quizIAMode === "photo");
   if (!classe) { showToast("❌ Choisis la classe", "error"); return; }
   if (!mat)    { showToast("❌ Choisis la matière", "error"); return; }
   if (modePhoto && !_quizIAPhotoBase64) { showToast("❌ Prends ou choisis d'abord une photo de ton cours", "error"); return; }
+
+  // Classement automatique : si le chapitre saisi ressemble à ≥70% à un chapitre
+  // déjà utilisé pour cette classe/matière, on réutilise le nom existant tel
+  // quel — évite les doublons ("Les fractions" / "fraction" / "Fractions " ...)
+  if (chapitre) chapitre = await _normaliserChapitreIA(classe, mat, chapitre);
 
   const btn = document.getElementById("quizIAGenBtn");
   const statusEl = document.getElementById("quizIAGenStatus");

@@ -3217,7 +3217,7 @@ async function genererCodePremium() {
 
   const btnCopy = document.createElement("button");
   btnCopy.textContent = "Copier";
-  btnCopy.style.cssText = "flex:1;background:linear-gradient(135deg,#10B981,#059669);color:white;border:none;border-radius:12px;padding:13px;font-weight:800;16px;cursor:pointer";
+  btnCopy.style.cssText = "flex:1;background:linear-gradient(135deg,#10B981,#059669);color:white;border:none;border-radius:12px;padding:13px;font-weight:800;font-size:16px;cursor:pointer";
   btnCopy.onclick = function() {
     const el = document.getElementById("codeGenValue");
     const range = document.createRange();
