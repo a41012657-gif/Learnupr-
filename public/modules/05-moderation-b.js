@@ -3255,7 +3255,7 @@ async function _appelIAQuizFailover(promptTexte, imageData) {
     const cle = clesGemini[i];
     if (!cle) continue;
     try {
-      const texte = await _appelGeminiBrut(cle, parts, { maxOutputTokens: 3500 });
+      const texte = await _appelGeminiBrut(cle, parts, { maxOutputTokens: 2200 });
       return { texte, fournisseur: "Gemini" };
     } catch(e) {
       derniereErreur = e;
@@ -3339,7 +3339,7 @@ async function _appelIACompatibleOpenAI(url, apiKey, model, promptTexte, imageDa
       model,
       messages: [{ role: "user", content }],
       temperature: 0.3,
-      max_tokens: 3500
+      max_tokens: 2200
     })
   });
   if (!res.ok) {
@@ -3371,7 +3371,7 @@ async function _appelMistralVision(apiKey, promptTexte, imageData) {
         ]
       }],
       temperature: 0.3,
-      max_tokens: 3500
+      max_tokens: 2200
     })
   });
   if (!res.ok) {
@@ -3405,6 +3405,8 @@ INSTRUCTION PRINCIPALE : Lis attentivement le contenu visible sur la photo (text
 RÈGLES STRICTES (si des questions sont possibles) :
 - Chaque question a exactement 4 choix, une seule bonne réponse.
 - Questions factuellement exactes, non ambiguës, fidèles au contenu réel de la photo.
+- LANGAGE SIMPLE : phrases courtes et claires, vocabulaire accessible à un élève de "${classe || "collège/lycée"}". N'utilise une notation ou une expression mathématique QUE si elle est strictement indispensable au sens de la question (ex: une formule, une équation) — jamais de formalisme superflu qui complique la lecture.
+- Explication courte : une seule phrase simple (max 15 mots), pas de jargon.
 - Réponds STRICTEMENT avec un tableau JSON, sans aucun texte avant/après, sans balises markdown, format exact :
 [{"q":"texte de la question","c":["choix A","choix B","choix C","choix D"],"r":0,"explication":"courte explication (1 phrase) de la bonne réponse"}]
 - "r" est l'INDEX entier (0 à 3) du bon choix dans le tableau "c".`;
@@ -3418,6 +3420,8 @@ RÈGLES STRICTES :
 - Chaque question a exactement 4 choix, une seule bonne réponse.
 - Questions factuellement exactes, non ambiguës, adaptées au programme camerounais.
 - N'invente aucun fait douteux ; reste sur des notions de programme scolaire classiques.
+- LANGAGE SIMPLE : phrases courtes et claires, vocabulaire accessible à un élève de "${classe || "collège/lycée"}". N'utilise une notation ou une expression mathématique QUE si elle est strictement indispensable au sens de la question — jamais de formalisme superflu qui complique la lecture.
+- Explication courte : une seule phrase simple (max 15 mots), pas de jargon.
 - Réponds STRICTEMENT avec un tableau JSON, sans aucun texte avant/après, sans balises markdown, format exact :
 [{"q":"texte de la question","c":["choix A","choix B","choix C","choix D"],"r":0,"explication":"courte explication (1 phrase) de la bonne réponse"}]
 - "r" est l'INDEX entier (0 à 3) du bon choix dans le tableau "c".`;

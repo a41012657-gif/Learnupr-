@@ -1204,29 +1204,26 @@ async function genererQuizIA() {
       ? "L'IA n'a pas trouvé de contenu de cours exploitable sur cette photo (image floue, illisible ou incomplète ?). Réessaie avec une photo plus nette et bien cadrée."
       : "L'IA n'a renvoyé aucune question exploitable, réessaie.");
 
-    // Sauvegarde en attente de validation modérateur — n'apparaît pas encore aux élèves
-    let tursoId = null;
-    if (turso) {
-      try {
-        await turso.execute({
-          sql: `INSERT INTO quiz_ia_pending (classe,matiere,chapitre,sujet,questions,fournisseur,auteur,statut,date,source) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-          args: [classe, mat, chapitre, sujet, JSON.stringify(questions), fournisseur,
-                 localStorage.getItem("userPhone") || "élève", "attente", new Date().toLocaleDateString("fr-FR"),
-                 modePhoto ? "photo" : "texte"]
-        });
-        const idRes = await turso.execute({ sql: "SELECT last_insert_rowid() as id", args: [] });
-        tursoId = idRes.rows?.[0]?.id || null;
-      } catch(e) { console.warn("Quiz IA — sauvegarde Turso:", e.message); }
-    }
-    if (!tursoId) throw new Error("Impossible d'enregistrer le quiz (connexion indisponible), réessaie plus tard.");
-
     _quizIAIncrementerCompteur();
+
+    // Copie envoyée en arrière-plan pour un contrôle qualité interne (équipe
+    // LearnUpr uniquement) — l'élève n'en sait rien et n'en dépend pas : son
+    // quiz est jouable tout de suite, que cette sauvegarde réussisse ou non.
+    if (turso) {
+      turso.execute({
+        sql: `INSERT INTO quiz_ia_pending (classe,matiere,chapitre,sujet,questions,fournisseur,auteur,statut,date,source) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        args: [classe, mat, chapitre, sujet, JSON.stringify(questions), fournisseur,
+               localStorage.getItem("userPhone") || "élève", "attente", new Date().toLocaleDateString("fr-FR"),
+               modePhoto ? "photo" : "texte"]
+      }).catch(e => console.warn("Quiz IA — sauvegarde contrôle qualité (arrière-plan):", e.message));
+    }
+
     if (statusEl) {
       statusEl.style.background = "linear-gradient(135deg,#d1fae5,#ecfdf5)"; statusEl.style.color = "#065F46";
-      statusEl.textContent = `✅ Quiz généré (${questions.length} questions, via ${fournisseur}) — envoyé à un modérateur pour validation !`;
+      statusEl.textContent = `✅ Ton quiz est prêt (${questions.length} questions) !`;
     }
-    showToast("✅ Ton quiz IA a été envoyé pour validation, il apparaîtra dans tes quiz dès qu'un modérateur l'aura approuvé !", "success");
-    setTimeout(fermerGenerateurQuizIA, 1800);
+    fermerGenerateurQuizIA();
+    _quizIALancerLocal(questions, classe, mat, chapitre);
   } catch(e) {
     if (statusEl) {
       statusEl.style.background = "#fee2e2"; statusEl.style.color = "#991B1B";
@@ -1235,6 +1232,30 @@ async function genererQuizIA() {
   } finally {
     if (btn) { btn.disabled = false; btn.style.opacity = "1"; btn.textContent = "✨ Générer le quiz"; }
   }
+}
+
+// Lance immédiatement, en local, le quiz que l'élève vient de générer — sans
+// écran d'attente ni mention d'une quelconque vérification. Le but du
+// générateur est que l'élève puisse tout de suite vérifier ce qu'il a retenu
+// de son cours ; réutilise le même moteur (quizState/afficherQuestion) que
+// lancerQuiz(), juste avec les questions IA au lieu de la banque de questions.
+function _quizIALancerLocal(questions, classe, mat, chapitre) {
+  quizState.matiere = mat;
+  quizState.score = 0;
+  quizState.current = 0;
+  quizState.answered = false;
+  quizState.questions = questions.map(q => ({ ...q }));
+  quizState.label = [classe, mat ? (NOMS_MATIERES[mat]||mat) : "", chapitre].filter(Boolean).join(" · ") || "Quiz";
+
+  const labelBadge = document.getElementById("quiz-label-badge");
+  if (labelBadge) labelBadge.textContent = "📘 " + quizState.label;
+
+  document.getElementById("quiz-home").style.display = "none";
+  document.getElementById("quiz-result").style.display = "none";
+  document.getElementById("quiz-game").style.display = "block";
+
+  _demarrerChronoGlobal();
+  afficherQuestion();
 }
 
 function qfFilterUpdateMatieres() {
