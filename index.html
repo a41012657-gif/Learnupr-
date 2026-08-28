@@ -201,7 +201,7 @@
           <div style="display:flex;align-items:flex-start;gap:6px"><span>3️⃣</span><span>Trouve ta <b>matière</b> dans la liste</span></div>
           <div style="display:flex;align-items:flex-start;gap:6px"><span>4️⃣</span><span>Appuie sur un <b>chapitre</b> pour l'ouvrir</span></div>
         </div>
-        <div style="margin-top:8px;font-size:9px;color:var(--t3);border-top:1px solid rgba(109,40,217,0.12);padding-top:6px">
+        <div id="guideRapideNote" style="margin-top:8px;font-size:9px;color:var(--t3);border-top:1px solid rgba(109,40,217,0.12);padding-top:6px">
           🆓 Les 2 premiers chapitres sont gratuits · 🔒 Le reste nécessite Premium (500 FCFA/mois)
         </div>
       </div>
@@ -824,6 +824,8 @@
             <button class="admin-action-btn gold" onclick="genererCodePremium()">🎟️ Générer code Premium</button>
             <button class="admin-action-btn" onclick="ouvrirActivationPremiumManuelle()" style="background:linear-gradient(135deg,#7C3AED,#6D28D9)">⭐ Activer Premium manuellement (sans code)</button>
             <button class="admin-action-btn" onclick="activerPremiumPourTous()" style="background:linear-gradient(135deg,#F59E0B,#D97706)">🎉 Rendre tout le monde Premium (1 mois)</button>
+            <button id="btnToggleGratuit" class="admin-action-btn" onclick="toggleModeGratuit()" style="background:linear-gradient(135deg,#10B981,#059669)">🎁 Rendre l'app gratuite temporairement</button>
+            <button class="admin-action-btn" onclick="voirCodesTransfert()" style="background:linear-gradient(135deg,#25D366,#128C7E)">🔑 Codes de transfert en attente</button>
             <button class="admin-action-btn danger" onclick="ouvrirGestionUtilisateur()" style="background:linear-gradient(135deg,#DC2626,#991B1B)">🛡️ Gérer un utilisateur (retirer Premium / supprimer)</button>
 
             <!-- 🔧 Outil réparation fichierUrl -->
@@ -881,7 +883,7 @@
 
         <div style="background:var(--card);border-radius:14px;padding:14px;margin-bottom:14px;border:1px solid var(--border)">
           <div style="font-weight:800;margin-bottom:8px;font-size:13px">📋 Règle Freemium</div>
-          <div style="font-size:12px;line-height:1.8;color:var(--t2)">🆓 Gratuit : 2 premiers chapitres<br>⭐ Premium : tous les chapitres (500 FCFA/mois)<br>🎁 10 contributions → 1 semaine gratuite</div>
+          <div id="regleFreemiumTexte" style="font-size:12px;line-height:1.8;color:var(--t2)">🆓 Gratuit : 2 premiers chapitres<br>⭐ Premium : tous les chapitres (500 FCFA/mois)<br>🎁 10 contributions → 1 semaine gratuite</div>
         </div>
         <div style="text-align:center;font-size:10px;padding-bottom:18px;color:var(--t3)">LearnUpr v5.4.3 🇨🇲</div>
       </div>
