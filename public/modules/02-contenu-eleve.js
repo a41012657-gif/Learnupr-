@@ -153,9 +153,10 @@ function ouvrirPlusPanel() {
   const premium = checkPremium();
   // Gratuit : Quiz (5 combos) + Forum (10 questions/jour) ont un accès partiel = 2/5.
   // Planning, Simulateur et Progression/Badges sont 100% Premium.
+  const modeGratuitActif = typeof MODE_GRATUIT !== "undefined" && MODE_GRATUIT;
   const compteurEl = document.getElementById("plusPanelCompteur");
   if (compteurEl) {
-    compteurEl.textContent = premium ? "⭐ Premium — 5/5 débloquées" : "🆓 Gratuit — 2/5 débloquées";
+    compteurEl.textContent = modeGratuitActif ? "🎁 Tout débloqué — 5/5" : premium ? "⭐ Premium — 5/5 débloquées" : "🆓 Gratuit — 2/5 débloquées";
   }
   ["planning", "simulateur", "badges"].forEach(s => {
     const lock = document.getElementById("plus-lock-" + s);
@@ -167,7 +168,9 @@ function ouvrirPlusPanel() {
   });
   const quizSub = document.getElementById("plus-quiz-sub");
   if (quizSub) {
-    quizSub.textContent = premium
+    quizSub.textContent = modeGratuitActif
+      ? "Illimité"
+      : premium
       ? "Illimité — membre Premium"
       : `${quizUnlockedCombos.length}/${FREE_LIMITS.QUIZ_FREE_COMBOS_MAX} combinaisons débloquées`;
   }
@@ -667,7 +670,8 @@ function renderProgression() {
   if (totalQ >= 10 && totalScore/totalQ >= 0.8) allBadges.push({e:"💡",t:"Brillant",s:"80%+ de moy."});
   // Badges spéciaux premium
   const earned = calculerBadges ? calculerBadges() : [];
-  earned.forEach(b => { if (!allBadges.find(x=>x.t===b.titre)) allBadges.push({e:b.emoji,t:b.titre,s:"⭐ Premium"}); });
+  const _badgeSpecialLabel = (typeof MODE_GRATUIT !== "undefined" && MODE_GRATUIT) ? "🏅 Spécial" : "⭐ Premium";
+  earned.forEach(b => { if (!allBadges.find(x=>x.t===b.titre)) allBadges.push({e:b.emoji,t:b.titre,s:_badgeSpecialLabel}); });
 
   badges.innerHTML = allBadges.length
     ? allBadges.map(b => `<div style="background:linear-gradient(135deg,var(--bg),var(--card));border:1px solid var(--border);border-radius:12px;padding:10px 12px;text-align:center;min-width:70px"><div style="font-size:24px">${b.e}</div><div style="font-weight:800;font-size:10px;color:var(--p);margin-top:2px">${b.t}</div><div style="font-size:9px;color:var(--t3)">${b.s}</div></div>`).join("")

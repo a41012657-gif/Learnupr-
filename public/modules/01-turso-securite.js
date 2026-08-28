@@ -322,7 +322,7 @@ function updateStats(matsCount, chapitresCount) {
   document.getElementById("stat-matieres").textContent = (MATIERES_PAR_CLASSE[activeClasse] || MATIERES).length;
   document.getElementById("stat-examens").textContent = examens || "0";
   document.getElementById("stat-chapitres").textContent = chapitresCount;
-  document.getElementById("stat-debloques").textContent = isPremium ? chapitresCount : Math.max(0, chapitresCount - getContenuPublie().filter(c=>c.type==="cours"&&_classeMatch(c.classe,activeClasse)&&c.premium).length);
+  document.getElementById("stat-debloques").textContent = checkPremium() ? chapitresCount : Math.max(0, chapitresCount - getContenuPublie().filter(c=>c.type==="cours"&&_classeMatch(c.classe,activeClasse)&&c.premium).length);
 }
 
 // ========== FORMULAIRE CONTRIBUTION ==========

@@ -123,7 +123,12 @@ function fermerGuide() {
 }
 
 function switchGuideTab(section, btn) {
-  document.getElementById("guideContent").innerHTML = GUIDE_SECTIONS[section] || "";
+  const contenuActif = typeof MODE_GRATUIT !== "undefined" && MODE_GRATUIT;
+  document.getElementById("guideContent").innerHTML = contenuActif && section === "contenu"
+    ? (GUIDE_SECTIONS[section] || "")
+        .replace("Certains sont gratuits, d'autres nécessitent le Premium.", "Tous les chapitres sont accessibles gratuitement en ce moment !")
+        .replace("Après validation par un modérateur, ton document sera visible par tous. 10 contributions approuvées = 1 semaine Premium offerte !", "Après validation par un modérateur, ton document sera visible par tous.")
+    : (GUIDE_SECTIONS[section] || "");
   document.querySelectorAll(".guide-tab").forEach(b => {
     b.style.color = "var(--t2)";
     b.style.borderBottomColor = "transparent";
@@ -298,11 +303,14 @@ function openPremiumGate(feature = "") {
 // ========== ASSISTANCE PRIORITAIRE (Premium feat 15) ==========
 function contacterAssistance() {
   const premium = checkPremium();
+  const modeGratuitActif = typeof MODE_GRATUIT !== "undefined" && MODE_GRATUIT;
   const phone = localStorage.getItem("userPhone") || "inconnu";
   const pseudo = localStorage.getItem("userPseudo") || phone;
   const adminNum = ADMIN_PHONES[0] || "674106410";
   const waNum = adminNum.startsWith("237") ? adminNum : "237" + adminNum;
-  const msg = premium
+  const msg = modeGratuitActif
+    ? `👋 *Contact LearnUpr*\n\nBonjour, je suis *${pseudo}*.\n\nMon numéro : ${phone}\n\nMa question : `
+    : premium
     ? `🌟 *Assistance Prioritaire LearnUpr*\n\nBonjour, je suis *${pseudo}* (membre Premium).\n\nJ'ai besoin d'aide avec : `
     : `👋 *Contact LearnUpr*\n\nBonjour, je suis *${pseudo}*.\n\nMon numéro : ${phone}\n\nMa question : `;
   window.open(`https://wa.me/${waNum}?text=${encodeURIComponent(msg)}`, "_blank");
@@ -1570,7 +1578,7 @@ function incrementerForumQuota() {
   return n;
 }
 function forumQuotaAtteint() {
-  if (isPremium) return false;
+  if (checkPremium()) return false;
   return getForumQuotaAujourdhui() >= FORUM_MAX_GRATUIT;
 }
 
@@ -1648,7 +1656,9 @@ async function renderForum() {
   if (!list) return;
 
   // Quota bar
-  if (!isPremium) {
+  const _forumPremium = checkPremium();
+  const _forumModeGratuit = typeof MODE_GRATUIT !== "undefined" && MODE_GRATUIT;
+  if (!_forumPremium) {
     const q = getForumQuotaAujourdhui();
     if (quotaBar) quotaBar.style.display = "flex";
     if (quotaCount) quotaCount.textContent = q;
@@ -1657,7 +1667,7 @@ async function renderForum() {
   }
 
   // Subtitle
-  if (subtitle) subtitle.textContent = isPremium ? "⭐ Premium — questions illimitées" : `${FORUM_MAX_GRATUIT - getForumQuotaAujourdhui()} question(s) restante(s) aujourd'hui`;
+  if (subtitle) subtitle.textContent = _forumModeGratuit ? "🎁 Questions illimitées" : _forumPremium ? "⭐ Premium — questions illimitées" : `${FORUM_MAX_GRATUIT - getForumQuotaAujourdhui()} question(s) restante(s) aujourd'hui`;
 
   // Skeleton
   list.innerHTML = `

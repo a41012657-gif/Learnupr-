@@ -1446,7 +1446,7 @@ function _renderSectionExamensOfficiels() {
   // Statut premium/gratuit calculé sur l'ordre global (avant regroupement par matière)
   examensBrut.forEach((ch, idx) => {
     const freeLimit = !checkPremium() && idx >= FREE_LIMITS.EXAMENS_MAX;
-    ch._lock = (ch.premium && !isPremium) || freeLimit;
+    ch._lock = (ch.premium && !checkPremium()) || freeLimit;
     ch._freeLimit = freeLimit;
   });
 
@@ -1475,7 +1475,7 @@ function _renderSectionExamensOfficiels() {
       <div class="chapitre-list">`;
 
     pag.items.forEach(ch => {
-      const examBadge = (ch.premium || ch._freeLimit)
+      const examBadge = (typeof MODE_GRATUIT !== "undefined" && MODE_GRATUIT) ? "" : (ch.premium || ch._freeLimit)
         ? `<span style="font-size:9px;background:var(--gold2);color:white;padding:1px 6px;border-radius:6px;white-space:nowrap">⭐ Premium</span>`
         : `<span style="font-size:9px;background:rgba(34,197,94,0.15);color:#22c55e;padding:1px 6px;border-radius:6px;white-space:nowrap;border:1px solid rgba(34,197,94,0.3)">🆓 Gratuit</span>`;
       html += `<div class="resource-item" onclick="${ch._lock ? `openPremiumGate('examens')` : `viewContenuPublie('${String(ch.id)}')`}">
@@ -1545,9 +1545,9 @@ function _renderSectionSequentielles() {
       html += `<div class="resource-item" style="opacity:0.5;pointer-events:none"><div class="chapitre-num" style="color:${col}">—</div><div class="chapitre-titre" style="color:var(--t3);font-style:italic">Aucune séquentielle publiée</div></div>`;
     } else {
       for (const ch of lecons) {
-        const lock = ch.premium && !isPremium;
+        const lock = ch.premium && !checkPremium();
         const seqLabel = ch.numero ? `Séq. ${ch.numero}` : "—";
-        const seqBadge = ch.premium
+        const seqBadge = (typeof MODE_GRATUIT !== "undefined" && MODE_GRATUIT) ? "" : ch.premium
           ? `<span style="font-size:9px;background:var(--gold2);color:white;padding:1px 6px;border-radius:6px;white-space:nowrap">⭐ Premium</span>`
           : `<span style="font-size:9px;background:rgba(34,197,94,0.15);color:#22c55e;padding:1px 6px;border-radius:6px;white-space:nowrap;border:1px solid rgba(34,197,94,0.3)">🆓 Gratuit</span>`;
         html += `<div class="resource-item" onclick="${lock ? "openPremiumGate('sequentielle')" : `viewContenuPublie('${String(ch.id)}')`}">
@@ -2601,7 +2601,7 @@ function updateProfilStatus() {
     if (premBtn) { premBtn.textContent = "⭐ Free"; premBtn.className = "btn-prem free"; }
     if (premBanner) premBanner.style.display = "flex";
   }
-  updatePremHint(isPremium);
+  updatePremHint(checkPremium());
 
   // Mode gratuit temporaire actif (bouton admin) : on masque toute mention de
   // paiement, même si l'élève n'a personnellement rien payé — sinon il voit
@@ -2620,11 +2620,72 @@ function updateProfilStatus() {
     }
     if (guideNote)  guideNote.textContent = "🎁 Tous les chapitres sont accessibles gratuitement en ce moment !";
     if (regleTexte) regleTexte.innerHTML = "🎁 Accès gratuit à tout le contenu pour le moment (offre spéciale de l'équipe LearnUpr) !";
+    // On masque aussi le bouton "S'abonner" du profil (il n'y a rien à
+    // acheter) et l'onglet "⭐ Premium" du guide, pour qu'aucune trace du
+    // système payant ne reste visible côté élève.
+    if (premBtn) premBtn.style.display = "none";
+    const guideTabPremium = document.querySelector('.guide-tab[onclick*="\'premium\'"]');
+    if (guideTabPremium) {
+      guideTabPremium.style.display = "none";
+      if (guideTabPremium.classList.contains("active")) switchGuideTab("debut", document.querySelector('.guide-tab[onclick*="\'debut\'"]'));
+    }
   } else {
     // Mode payant réactivé : on remet les textes/bannières d'origine tels
     // quels, pour que tout redevienne exactement comme avant l'activation.
     if (guideNote)  guideNote.textContent = "🆓 Les 2 premiers chapitres sont gratuits · 🔒 Le reste nécessite Premium (500 FCFA/mois)";
     if (regleTexte) regleTexte.innerHTML = "🆓 Gratuit : 2 premiers chapitres<br>⭐ Premium : tous les chapitres (500 FCFA/mois)<br>🎁 10 contributions → 1 semaine gratuite";
+    if (premBtn) premBtn.style.display = "";
+    const guideTabPremiumOff = document.querySelector('.guide-tab[onclick*="\'premium\'"]');
+    if (guideTabPremiumOff) guideTabPremiumOff.style.display = "";
+  }
+  _masquerToutesTracesPremium();
+}
+
+// ── Masque (ou réaffiche) TOUTE mention statique de "Premium" restante
+// dans l'app quand le mode gratuit est actif — au-delà des textes déjà
+// gérés dynamiquement ci-dessus (bannières, badges, verrous de contenu).
+// But : qu'un élève qui ouvre l'app pendant le mode gratuit ne puisse
+// tomber sur aucune trace qu'un système payant a un jour existé.
+function _masquerToutesTracesPremium() {
+  const actif = typeof MODE_GRATUIT !== "undefined" && MODE_GRATUIT;
+  const disp = actif ? "none" : "";
+  [
+    "splashPremiumFeat", "splashSnote", "searchFilterPremiumChip",
+    "miAbonnementItem", "assistanceBadge", "quizIABadgePremium",
+    "btnPreuvePaiementFlottant", "btnCodeHeader"
+  ].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = disp;
+  });
+  // Si la page "Code Premium" était ouverte au moment où le mode gratuit
+  // s'active, on en sort — rien à activer pendant que tout est gratuit.
+  if (actif) {
+    const codepage = document.getElementById("codepage");
+    if (codepage && codepage.classList.contains("active") && typeof showPage === "function") showPage("main");
+  }
+
+  const expli = document.getElementById("loginPhoneExpli");
+  if (expli) {
+    expli.innerHTML = actif
+      ? "Entre ton numéro WhatsApp ci-dessous pour créer ton compte élève et sauvegarder ta progression.<br><b>C'est pour tout le monde</b> — pas seulement pour les administrateurs."
+      : "Entre ton numéro WhatsApp ci-dessous pour créer ton compte élève, sauvegarder ta progression et débloquer ton statut Premium si tu es abonné.<br><b>C'est pour tout le monde</b> — pas seulement pour les administrateurs.";
+  }
+  const entryExpli = document.getElementById("entryPhoneExpli");
+  if (entryExpli) {
+    entryExpli.textContent = actif
+      ? "Nécessaire pour créer ton compte et sauvegarder ta progression."
+      : "Nécessaire pour créer ton compte, sauvegarder ta progression et activer ton Premium si tu es abonné.";
+  }
+
+  const forumSub = document.getElementById("plus-forum-sub");
+  if (forumSub) forumSub.textContent = actif ? "Questions illimitées" : "10 questions/jour gratuit, illimité en Premium";
+
+  // Si le filtre de recherche "premium" était actif au moment où le mode
+  // gratuit s'active, on retombe sur "Tout" pour ne pas laisser un filtre
+  // avec ce nom sélectionné mais invisible.
+  if (actif && typeof searchFilter !== "undefined" && searchFilter === "premium") {
+    const allChip = document.querySelector('.search-filter-chip[data-filter="all"]');
+    if (typeof setSearchFilter === "function" && allChip) setSearchFilter("all", allChip);
   }
 }
 
@@ -4059,13 +4120,13 @@ function rechercherAvancee(query) {
     results.innerHTML = `<div style="padding:16px;text-align:center;color:var(--t3);font-size:12px">🔍 Aucun résultat pour "${esc(query)}"</div>`;
   } else {
     results.innerHTML = items.map(item => `
-      <div class="sres-item" onclick="clearSearch();${item.isExamen ? `viewContenuPublie('${String(item.id)}')` : `setClasse('${esc(item.classe||activeClasse)}');viewChapter(${Number(item.id)},'${esc(item.mat)}',${!!(item.premium && !isPremium)})`}">
+      <div class="sres-item" onclick="clearSearch();${item.isExamen ? `viewContenuPublie('${String(item.id)}')` : `setClasse('${esc(item.classe||activeClasse)}');viewChapter(${Number(item.id)},'${esc(item.mat)}',${!!(item.premium && !checkPremium())})`}">
         <div class="sres-ico">${item.isExamen ? "🏆" : (EMOJIS[item.mat] || "📘")}</div>
         <div style="flex:1">
           <div class="sres-title">${esc(item.titre)}</div>
           <div class="sres-sub">${esc((item.mat||"").replace(/_/g," "))} · ${item.isExamen ? "📋 Examen" : esc(item.classe||activeClasse)}</div>
         </div>
-        <span class="sres-badge ${item.premium ? 'lock' : ''}">${item.premium ? "🔒 Premium" : "🆓 Gratuit"}</span>
+        ${(typeof MODE_GRATUIT !== "undefined" && MODE_GRATUIT) ? "" : `<span class="sres-badge ${item.premium ? 'lock' : ''}">${item.premium ? "🔒 Premium" : "🆓 Gratuit"}</span>`}
       </div>`).join("");
   }
   results.style.display = "block";
@@ -4176,11 +4237,11 @@ async function renderContent() {
         const ch = lecons[chapIdx];
         // Limite gratuit : 2 premiers chapitres seulement
         const freeLimit = !checkPremium() && chapIdx >= FREE_LIMITS.COURS_MAX_CHAPITRES;
-        const lock = (ch.premium && !isPremium) || freeLimit;
+        const lock = (ch.premium && !checkPremium()) || freeLimit;
         const lockReason = freeLimit ? "cours" : "";
         const safeTitle = (ch.titre || "").replace(/'/g, "\\'");
         const typeLabel = ch.typeFichier === "sequencielle" ? "📋 Séq." : ch.typeFichier === "cours" ? "📚 Cours" : ch.typeFichier === "la_zone" ? "🔥 La Zone" : ch.typeFichier === "competences" ? "🎯 Compét." : "🏆 Officiel";
-        const premBadge = (ch.premium || freeLimit)
+        const premBadge = (typeof MODE_GRATUIT !== "undefined" && MODE_GRATUIT) ? "" : (ch.premium || freeLimit)
           ? `<span style="font-size:9px;background:var(--gold2);color:white;padding:1px 6px;border-radius:6px;margin-left:4px;white-space:nowrap">⭐ Premium</span>`
           : `<span style="font-size:9px;background:rgba(34,197,94,0.15);color:#22c55e;padding:1px 6px;border-radius:6px;margin-left:4px;white-space:nowrap;border:1px solid rgba(34,197,94,0.3)">🆓 Gratuit</span>`;
         html += `<div class="resource-item" onclick="${lock ? `openPremiumGate('${lockReason || "cours"}')` : `viewContenuPublie('${String(ch.id)}')`}">
@@ -4264,9 +4325,9 @@ async function renderContent() {
         }
         html += `<div class="chapitre-list">`;
         for (const v of parChapitre[ch]) {
-          const lock = v.premium && !isPremium;
+          const lock = v.premium && !checkPremium();
           const safeTitle = (v.titre || "").replace(/'/g, "\\'");
-          const vBadge = v.premium
+          const vBadge = (typeof MODE_GRATUIT !== "undefined" && MODE_GRATUIT) ? "" : v.premium
             ? `<span style="font-size:9px;background:var(--gold2);color:white;padding:1px 6px;border-radius:6px;white-space:nowrap">⭐ Premium</span>`
             : `<span style="font-size:9px;background:rgba(34,197,94,0.15);color:#22c55e;padding:1px 6px;border-radius:6px;white-space:nowrap;border:1px solid rgba(34,197,94,0.3)">🆓 Gratuit</span>`;
           html += `<div class="resource-item" onclick="${lock ? `openPremiumGate('video')` : `viewContenuPublie('${String(v.id)}')`}">
@@ -4341,8 +4402,8 @@ async function renderContent() {
         <div class="mhead" style="border-left:4px solid ${col}"><div class="mico" style="background:${col}20">${emo}</div><div class="mnom" style="color:${col}">${matCap}</div><div class="mcnt">${lecons.length}</div></div>
         <div class="chapitre-list">`;
       for (const ch of lecons) {
-        const lock = ch.premium && !isPremium;
-        const accessBadge = lock
+        const lock = ch.premium && !checkPremium();
+        const accessBadge = (typeof MODE_GRATUIT !== "undefined" && MODE_GRATUIT) ? "" : lock
           ? `<span style="background:rgba(244,162,97,0.15);color:var(--gold2);font-size:9px;font-weight:800;padding:2px 8px;border-radius:10px;white-space:nowrap">⭐ Premium</span>`
           : `<span style="font-size:9px;background:rgba(34,197,94,0.15);color:#22c55e;padding:1px 6px;border-radius:6px;white-space:nowrap;border:1px solid rgba(34,197,94,0.3)">🆓 Gratuit</span>`;
         html += `<div class="resource-item" onclick="${lock ? "openPremiumGate('autres_lycees')" : `viewContenuPublie('${String(ch.id)}')`}" style="align-items:flex-start;padding:12px 14px">
@@ -4412,12 +4473,12 @@ async function renderContent() {
         <div class="mhead" style="border-left:4px solid ${col}"><div class="mico" style="background:${col}20">${emo}</div><div class="mnom" style="color:${col}">${matCap}</div><div class="mcnt">${lecons.length} ressource(s)</div></div>
         <div class="chapitre-list">`;
       for (const ch of lecons) {
-        const lock = ch.premium && !isPremium;
+        const lock = ch.premium && !checkPremium();
         const estZone = ch.typeFichier === "la_zone";
         const typeBadge = estZone
           ? `<span style="font-size:9px;background:rgba(231,111,81,0.15);color:#E76F51;padding:1px 6px;border-radius:6px;white-space:nowrap;border:1px solid rgba(231,111,81,0.3)">🔥 Fiche</span>`
           : `<span style="font-size:9px;background:rgba(92,107,192,0.15);color:#5C6BC0;padding:1px 6px;border-radius:6px;white-space:nowrap;border:1px solid rgba(92,107,192,0.3)">🎯 Compétence</span>`;
-        const premBadge = ch.premium
+        const premBadge = (typeof MODE_GRATUIT !== "undefined" && MODE_GRATUIT) ? "" : ch.premium
           ? `<span style="font-size:9px;background:var(--gold2);color:white;padding:1px 6px;border-radius:6px;white-space:nowrap">⭐ Premium</span>`
           : `<span style="font-size:9px;background:rgba(34,197,94,0.15);color:#22c55e;padding:1px 6px;border-radius:6px;white-space:nowrap;border:1px solid rgba(34,197,94,0.3)">🆓 Gratuit</span>`;
         html += `<div class="resource-item" onclick="${lock ? `openPremiumGate('${estZone?"la_zone":"competences"}')` : `viewContenuPublie('${String(ch.id)}')`}">
