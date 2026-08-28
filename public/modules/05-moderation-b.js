@@ -261,6 +261,7 @@ function _quizComboAutorisee(classe, mat, chapitre) {
 
 // Vérifier si premium (multi-source)
 function checkPremium() {
+  if (typeof MODE_GRATUIT !== "undefined" && MODE_GRATUIT) return true; // App rendue gratuite temporairement par l'admin
   return isPremium
     || localStorage.getItem("isPremium") === "true"
     || localStorage.getItem("userRole") === "admin"

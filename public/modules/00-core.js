@@ -239,6 +239,41 @@ function _appliquerVisibiliteTD() {
   }
 }
 
+// ── Mode gratuit temporaire (débloque le Premium pour tout le monde) ──────
+// checkPremium() (05-moderation-b.js) retourne true pour tout le monde tant
+// que MODE_GRATUIT est actif — utile pour une opération promo, une panne de
+// paiement, ou juste rendre l'app accessible à tous temporairement, sans
+// avoir à distribuer des codes un par un.
+async function toggleModeGratuit() {
+  const roleLocal = localStorage.getItem("userRole") || "";
+  const caller = localStorage.getItem("userPhone") || "";
+  let isAdmin = roleLocal === "admin";
+  if (!isAdmin) { try { isAdmin = await isAdminPhone(caller); } catch(e) { isAdmin = false; } }
+  if (!isAdmin) { showToast("⛔ Réservé à l'administrateur", "error"); return; }
+
+  MODE_GRATUIT = !MODE_GRATUIT;
+  localStorage.setItem("mode_gratuit", MODE_GRATUIT ? "1" : "0");
+  _majLabelBoutonGratuit();
+  if (typeof updateProfilStatus === "function") updateProfilStatus();
+  if (turso) {
+    try {
+      await turso.execute({ sql: "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT DEFAULT '')", args: [] });
+      await turso.execute({ sql: "INSERT OR REPLACE INTO app_settings (key, value) VALUES ('mode_gratuit', ?)", args: [MODE_GRATUIT ? "1" : "0"] });
+    } catch(e) { showToast("⚠️ Appliqué en local, mais pas synchronisé sur les autres appareils : " + e.message, "info"); }
+  }
+  showToast(MODE_GRATUIT ? "🎁 App rendue gratuite pour tout le monde (Premium débloqué)" : "🔒 Mode gratuit désactivé, le Premium redevient payant", "success");
+}
+
+function _majLabelBoutonGratuit() {
+  const b = document.getElementById("btnToggleGratuit");
+  if (!b) return;
+  b.textContent = MODE_GRATUIT ? "🔒 Réactiver le Premium payant" : "🎁 Rendre l'app gratuite temporairement";
+  b.style.background = MODE_GRATUIT
+    ? "linear-gradient(135deg,#DC2626,#991B1B)"
+    : "linear-gradient(135deg,#10B981,#059669)";
+}
+window.toggleModeGratuit = toggleModeGratuit;
+
 // Bascule le masquage de l'onglet Travaux Dirigés — réservé à l'admin.
 // Utile temporairement le temps de nettoyer des catégories mal classées
 // (via l'outil de diagnostic) sans que les élèves voient un onglet en vrac.
@@ -283,6 +318,12 @@ async function _chargerSettingsTurso() {
           localStorage.setItem("td_masque", TD_MASQUE ? "1" : "0");
           _appliquerVisibiliteTD();
           _majLabelBoutonTD();
+        }
+        if (r.key === "mode_gratuit") {
+          MODE_GRATUIT = r.value === "1";
+          localStorage.setItem("mode_gratuit", MODE_GRATUIT ? "1" : "0");
+          _majLabelBoutonGratuit();
+          if (typeof updateProfilStatus === "function") updateProfilStatus();
         }
         if (r.key === "whatsapp_paiement" && r.value) {
           WHATSAPP_PAIEMENT_NUM = r.value;
@@ -402,6 +443,7 @@ let turso = null;
 // depuis le panel admin). Persisté en local + Turso (app_settings) pour
 // s'appliquer à tous les appareils, pas seulement celui de l'admin.
 let TD_MASQUE = localStorage.getItem("td_masque") === "1";
+let MODE_GRATUIT = localStorage.getItem("mode_gratuit") === "1";
 // L'admin se connecte normalement via le formulaire — aucun pré-enregistrement forcé
 let isPremium = localStorage.getItem("isPremium") === "true";
 let activeClasse = "3ème";
@@ -781,6 +823,17 @@ async function initTurso() {
       last_seen INTEGER DEFAULT 0,
       created_at INTEGER DEFAULT 0,
       UNIQUE(phone, device_id)
+    )`, args: [] });
+    // Transfert de compte vers un nouvel appareil via code WhatsApp (self-service,
+    // en complément — pas en remplacement — du transfert manuel par l'admin).
+    await turso.execute({ sql: `CREATE TABLE IF NOT EXISTS transfert_codes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      phone TEXT NOT NULL,
+      code TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      expire_at INTEGER NOT NULL,
+      utilise INTEGER DEFAULT 0,
+      created_at INTEGER DEFAULT 0
     )`, args: [] });
     await turso.execute({ sql: `CREATE TABLE IF NOT EXISTS contributions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1201,6 +1254,17 @@ async function sauvegarderPseudo(pseudo) {
   } catch(e) { console.warn("Pseudo Turso:", e); return false; }
 }
 (async () => {
+  // Restaure IMMÉDIATEMENT le menu admin depuis le cache local (localStorage),
+  // sans attendre la chaîne de synchronisation Turso (contenu/quiz/planning/
+  // progression/notifs) qui peut prendre plusieurs secondes sur une connexion
+  // lente. Avant ce fix, un admin déjà connecté voyait son menu disparaître au
+  // chargement puis réapparaître seulement une fois toute la synchro terminée.
+  // verifierAdmin() a déjà un chemin rapide 100% local (cachedRole==="admin")
+  // qui ne nécessite aucun réseau — on l'appelle donc en parallèle, tout de
+  // suite ; l'appel plus tardif dans initTurso() reste la vérification
+  // faisant autorité (re-confirmée via Turso) et ne fait rien de plus si le
+  // cache était déjà correct.
+  if (typeof verifierAdmin === "function") verifierAdmin().catch(() => {});
   await _initConfig();
   await initTurso();
   await _chargerSettingsTurso();
@@ -2256,19 +2320,184 @@ function _afficherBlocageAppareil(phone) {
       <div style="font-weight:900;font-size:18px;color:var(--red);margin-bottom:8px">Accès refusé</div>
       <div style="font-size:12px;color:var(--t2);line-height:1.7;margin-bottom:20px">
         Le compte <strong>${mask}</strong> est lié à un autre appareil.<br>
-        Pour des raisons de sécurité, un compte ne peut être utilisé que sur l'appareil enregistré.<br><br>
-        Si tu as changé de téléphone, contacte l'admin pour transférer ton compte.
+        Pour des raisons de sécurité, un compte ne peut être utilisé que sur l'appareil enregistré.
+      </div>
+
+      <!-- Option 1 (nouvelle) : code de transfert par WhatsApp, en libre-service -->
+      <div style="background:var(--bg);border-radius:14px;padding:14px;margin-bottom:12px;text-align:left">
+        <div style="font-weight:800;font-size:12px;margin-bottom:6px">📱 Tu as toujours accès à ce numéro sur WhatsApp ?</div>
+        <div style="font-size:10px;color:var(--t3);margin-bottom:10px;line-height:1.6">Demande un code de transfert, l'admin te le confirmera par WhatsApp, puis entre-le ici pour débloquer ce nouvel appareil toi-même.</div>
+        <button onclick="demanderCodeTransfert('${phone}')" id="btnDemanderCodeTransfert"
+          style="width:100%;background:linear-gradient(135deg,#25D366,#128C7E);color:white;border:none;border-radius:12px;padding:12px;font-weight:800;font-size:12px;cursor:pointer;margin-bottom:8px">
+          📲 Demander un code de transfert
+        </button>
+        <div id="zoneCodeTransfert" style="display:none">
+          <input id="inputCodeTransfert" type="text" inputmode="numeric" maxlength="6" placeholder="Code à 6 chiffres" class="input" style="text-align:center;letter-spacing:4px;font-size:16px;font-weight:800;margin-bottom:8px">
+          <button onclick="validerCodeTransfert('${phone}')"
+            style="width:100%;background:linear-gradient(135deg,var(--p),var(--p2));color:white;border:none;border-radius:12px;padding:12px;font-weight:800;font-size:12px;cursor:pointer">
+            ✅ Valider le code
+          </button>
+        </div>
+      </div>
+
+      <div style="font-size:10px;color:var(--t3);margin-bottom:10px">— ou —</div>
+
+      <!-- Option 2 (ancienne, inchangée) : transfert manuel, pour qui a perdu sa puce -->
+      <div style="font-size:11px;color:var(--t2);line-height:1.6;margin-bottom:10px">
+        Tu as perdu ta puce/ce numéro ? Contacte directement l'admin, il gèrera le transfert manuellement.
       </div>
       <button onclick="contacterAdminTransfert('${phone}')"
-        style="width:100%;background:linear-gradient(135deg,#25D366,#128C7E);color:white;border:none;border-radius:14px;padding:14px;font-weight:900;font-size:14px;cursor:pointer;margin-bottom:8px">
+        style="width:100%;background:var(--bg);border:1.5px solid var(--border);color:var(--t2);border-radius:14px;padding:12px;font-weight:800;font-size:13px;cursor:pointer;margin-bottom:8px">
         📲 Contacter l'admin WhatsApp
       </button>
       <button onclick="document.getElementById('deviceBlockModal').remove()"
-        style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:14px;padding:12px;font-weight:700;font-size:13px;cursor:pointer;color:var(--t2)">
+        style="width:100%;background:none;border:none;font-weight:700;font-size:13px;cursor:pointer;color:var(--t3)">
         Fermer
       </button>
     </div>`;
   document.body.appendChild(modal);
+}
+
+// Génère un code à 6 chiffres, unique parmi les codes actuellement valides
+// (non expirés, non utilisés) pour ce numéro — évite toute collision.
+function _genererCodeTransfertUnique() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+// ── Vue admin : liste des codes de transfert en attente ──
+// L'admin y trouve le code à communiquer à l'élève, seulement après avoir
+// vérifié son identité par lui-même (discussion WhatsApp). Le code n'est
+// jamais visible ailleurs que dans cet écran réservé à l'admin.
+async function voirCodesTransfert() {
+  const roleLocal = localStorage.getItem("userRole") || "";
+  const caller = localStorage.getItem("userPhone") || "";
+  let isAdmin = roleLocal === "admin";
+  if (!isAdmin) { try { isAdmin = await isAdminPhone(caller); } catch(e) { isAdmin = false; } }
+  if (!isAdmin) { showToast("⛔ Réservé à l'administrateur", "error"); return; }
+  if (!turso) { showToast("❌ Connexion indisponible", "error"); return; }
+
+  let rows = [];
+  try {
+    const res = await turso.execute({
+      sql: "SELECT phone, code, expire_at, created_at FROM transfert_codes WHERE utilise=0 AND expire_at>? ORDER BY created_at DESC",
+      args: [Date.now()]
+    });
+    rows = res.rows || [];
+  } catch(e) { showToast("❌ Erreur : " + e.message, "error"); return; }
+
+  const existing = document.getElementById("codesTransfertModal");
+  if (existing) existing.remove();
+  const modal = document.createElement("div");
+  modal.id = "codesTransfertModal";
+  modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px";
+
+  const items = rows.length
+    ? rows.map(r => {
+        const mins = Math.max(0, Math.round((r.expire_at - Date.now()) / 60000));
+        const waNum = "237" + r.phone;
+        const msg = encodeURIComponent(`Bonjour, voici ton code de transfert LearnUpr : ${r.code}\n\nEntre-le dans l'app sur ton nouvel appareil pour débloquer ton compte. Valable encore quelques minutes.`);
+        return `<div style="background:var(--bg);border-radius:12px;padding:12px;margin-bottom:8px;text-align:left">
+          <div style="font-weight:800;font-size:13px">${r.phone}</div>
+          <div style="font-size:20px;font-weight:900;letter-spacing:3px;color:var(--p);margin:4px 0">${r.code}</div>
+          <div style="font-size:10px;color:var(--t3);margin-bottom:8px">Expire dans ~${mins} min</div>
+          <button onclick="window.open('https://wa.me/${waNum}?text=${msg}','_blank')" style="width:100%;background:linear-gradient(135deg,#25D366,#128C7E);color:white;border:none;border-radius:10px;padding:9px;font-weight:800;font-size:11px;cursor:pointer">📲 Envoyer ce code par WhatsApp</button>
+        </div>`;
+      }).join("")
+    : `<div style="font-size:12px;color:var(--t3);padding:20px 0">Aucune demande de transfert en attente.</div>`;
+
+  modal.innerHTML = `
+    <div style="background:var(--card);border-radius:20px;padding:20px;max-width:380px;width:100%;max-height:80vh;overflow-y:auto;text-align:center">
+      <div style="font-weight:900;font-size:16px;margin-bottom:4px">🔑 Codes de transfert en attente</div>
+      <div style="font-size:10px;color:var(--t3);margin-bottom:14px">Vérifie l'identité de l'élève avant d'envoyer un code.</div>
+      ${items}
+      <button onclick="document.getElementById('codesTransfertModal').remove()" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:10px;font-weight:700;font-size:12px;cursor:pointer;color:var(--t2);margin-top:6px">Fermer</button>
+    </div>`;
+  document.body.appendChild(modal);
+}
+window.voirCodesTransfert = voirCodesTransfert;
+
+// ── Demande de code (élève, sur le nouvel appareil bloqué) ──
+// Ne remplace PAS le transfert manuel : c'est une option en plus, en libre-
+// service, pour qui garde accès à son numéro WhatsApp. L'admin reste dans la
+// boucle : il confirme l'identité avant de communiquer le code par WhatsApp.
+async function demanderCodeTransfert(phone) {
+  if (!turso) { showToast("❌ Connexion indisponible, réessaie plus tard", "error"); return; }
+  const btn = document.getElementById("btnDemanderCodeTransfert");
+  if (btn) { btn.disabled = true; btn.textContent = "⏳ Génération du code..."; }
+  try {
+    const deviceId = _getDeviceKey();
+    const now = Date.now();
+    let code = _genererCodeTransfertUnique();
+    // Vérifie qu'aucun code valide identique n'existe déjà pour ce numéro (collision improbable mais on régénère au besoin)
+    for (let i = 0; i < 5; i++) {
+      const existant = await turso.execute({
+        sql: "SELECT id FROM transfert_codes WHERE phone=? AND code=? AND utilise=0 AND expire_at>?",
+        args: [phone, code, now]
+      });
+      if (!existant.rows.length) break;
+      code = _genererCodeTransfertUnique();
+    }
+    const expireAt = now + 15 * 60 * 1000; // 15 minutes
+    await turso.execute({
+      sql: "INSERT INTO transfert_codes (phone, code, device_id, expire_at, utilise, created_at) VALUES (?,?,?,?,0,?)",
+      args: [phone, code, deviceId, expireAt, now]
+    });
+
+    const adminNum = ADMIN_PHONES[0] || "237674106410";
+    const waNum = adminNum.startsWith("237") ? adminNum : "237" + adminNum;
+    // Important : le code n'apparaît PAS dans ce message. S'il y était, l'élève
+    // le verrait dans la zone de texte WhatsApp avant même de l'envoyer, et
+    // pourrait le taper dans l'app sans jamais réellement contacter l'admin.
+    // Le code n'est visible que dans le Dashboard Admin (voirCodesTransfert).
+    const msg = encodeURIComponent(`Bonjour, je voudrais transférer mon compte LearnUpr (${phone}) vers un nouvel appareil.\n\nPeux-tu vérifier que c'est bien moi et me communiquer mon code de transfert ? Merci 🙏`);
+    window.open(`https://wa.me/${waNum}?text=${msg}`, "_blank");
+
+    const zone = document.getElementById("zoneCodeTransfert");
+    if (zone) zone.style.display = "block";
+    showToast("📲 Demande envoyée à l'admin — il te communiquera ton code par WhatsApp après vérification. Entre-le ci-dessous une fois reçu.", "success");
+  } catch(e) {
+    showToast("❌ Erreur : " + e.message, "error");
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "📲 Demander un code de transfert"; }
+  }
+}
+
+// ── Validation du code (élève, sur le nouvel appareil bloqué) ──
+// Le code doit correspondre au même appareil qui l'a demandé (pas de vol de
+// code depuis un autre device), ne pas être expiré, ni déjà utilisé.
+async function validerCodeTransfert(phone) {
+  if (!turso) { showToast("❌ Connexion indisponible, réessaie plus tard", "error"); return; }
+  const input = document.getElementById("inputCodeTransfert");
+  const code = (input?.value || "").trim();
+  if (!/^[0-9]{6}$/.test(code)) { showToast("❌ Code invalide (6 chiffres)", "error"); return; }
+
+  try {
+    const deviceId = _getDeviceKey();
+    const now = Date.now();
+    const res = await turso.execute({
+      sql: "SELECT id FROM transfert_codes WHERE phone=? AND code=? AND device_id=? AND utilise=0 AND expire_at>? ORDER BY id DESC LIMIT 1",
+      args: [phone, code, deviceId, now]
+    });
+    if (!res.rows.length) {
+      showToast("❌ Code invalide, expiré, ou déjà utilisé", "error");
+      return;
+    }
+    // Code valide → marquer utilisé + transférer le compte vers cet appareil
+    await turso.execute({ sql: "UPDATE transfert_codes SET utilise=1 WHERE id=?", args: [res.rows[0].id] });
+    await turso.execute({ sql: "UPDATE users SET device_id=? WHERE phone=?", args: [deviceId, phone] });
+    await turso.execute({
+      sql: `INSERT OR REPLACE INTO device_sessions (phone, device_id, device_label, trusted, last_seen, created_at) VALUES (?,?,?,1,?,?)`,
+      args: [phone, deviceId, `${navigator.platform || "Mobile"} — ${new Date().toLocaleDateString("fr-FR")}`, now, now]
+    });
+
+    document.getElementById("deviceBlockModal")?.remove();
+    showToast("✅ Compte transféré sur ce nouvel appareil !", "success");
+    // Relancer la connexion automatiquement avec ce numéro
+    const loginPhone = document.getElementById("loginPhone");
+    if (loginPhone) { loginPhone.value = phone; loginUser(); }
+  } catch(e) {
+    showToast("❌ Erreur : " + e.message, "error");
+  }
 }
 
 function contacterAdminTransfert(phone) {
@@ -2373,6 +2602,30 @@ function updateProfilStatus() {
     if (premBanner) premBanner.style.display = "flex";
   }
   updatePremHint(isPremium);
+
+  // Mode gratuit temporaire actif (bouton admin) : on masque toute mention de
+  // paiement, même si l'élève n'a personnellement rien payé — sinon il voit
+  // les fonctionnalités débloquées ET un bandeau "Passe Premium — 500 FCFA"
+  // en même temps, ce qui n'a aucun sens de son point de vue.
+  const guideNote   = document.getElementById("guideRapideNote");
+  const regleTexte  = document.getElementById("regleFreemiumTexte");
+  if (typeof MODE_GRATUIT !== "undefined" && MODE_GRATUIT) {
+    st.textContent = "🎁 Accès gratuit (offre spéciale)";
+    st.style.color = "var(--yellow)";
+    if (aboBtn) aboBtn.style.display = "none";
+    if (premBanner) premBanner.style.display = "none";
+    const roleDisplay = document.getElementById("roleDisplay");
+    if (roleDisplay && !["⭐ ADMINISTRATEUR", "🛡️ MODÉRATEUR"].includes(roleDisplay.textContent)) {
+      roleDisplay.textContent = "🎁 ACCÈS GRATUIT";
+    }
+    if (guideNote)  guideNote.textContent = "🎁 Tous les chapitres sont accessibles gratuitement en ce moment !";
+    if (regleTexte) regleTexte.innerHTML = "🎁 Accès gratuit à tout le contenu pour le moment (offre spéciale de l'équipe LearnUpr) !";
+  } else {
+    // Mode payant réactivé : on remet les textes/bannières d'origine tels
+    // quels, pour que tout redevienne exactement comme avant l'activation.
+    if (guideNote)  guideNote.textContent = "🆓 Les 2 premiers chapitres sont gratuits · 🔒 Le reste nécessite Premium (500 FCFA/mois)";
+    if (regleTexte) regleTexte.innerHTML = "🆓 Gratuit : 2 premiers chapitres<br>⭐ Premium : tous les chapitres (500 FCFA/mois)<br>🎁 10 contributions → 1 semaine gratuite";
+  }
 }
 
 // ========== ADMIN — Vérification via Turso uniquement (aucun numéro en dur) ==========
@@ -3746,7 +3999,7 @@ function _initSearchFiltreClasseSelect() {
   sel.dataset.filled = "1";
 }
 document.addEventListener("DOMContentLoaded", _initSearchFiltreClasseSelect);
-document.addEventListener("DOMContentLoaded", () => { _appliquerVisibiliteTD(); _majLabelBoutonTD(); });
+document.addEventListener("DOMContentLoaded", () => { _appliquerVisibiliteTD(); _majLabelBoutonTD(); _majLabelBoutonGratuit(); });
 
 function rechercherAvancee(query) {
   const results = document.getElementById("sResults");
