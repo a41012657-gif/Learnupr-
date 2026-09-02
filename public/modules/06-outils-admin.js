@@ -2575,7 +2575,7 @@ async function _iazipAppelGemini(apiKeys, base64, mimeType) {
     const cle = cles[idxCle % cles.length];
     try {
       const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${cle}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${cle}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

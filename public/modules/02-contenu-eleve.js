@@ -1048,14 +1048,81 @@ function quizUpdateChapitres() {
 
 // ========== 🎬 QUIZ IA — GÉNÉRATION PAR L'ÉLÈVE (Premium, 3/jour) ==========
 const QUIZ_IA_DAILY_MAX = 3;
-const QUIZ_IA_NB_QUESTIONS = 6;
+const QUIZ_IA_NB_QUESTIONS_MIN = 10;
+const QUIZ_IA_NB_QUESTIONS_MAX = 20;
+const QUIZ_IA_NB_QUESTIONS_DEFAUT = 12;
+// Nombre de quiz IA gardés dans "Mes quiz IA" (rejouables/supprimables par l'élève)
+const QUIZ_IA_HISTORIQUE_MAX = 30;
 
-// Mode de génération : "texte" (sujet libre) ou "photo" (photo du cours prise/choisie
-// par l'élève, lue par l'IA multimodale). _quizIAPhotoBase64/_quizIAPhotoMime ne
-// contiennent jamais la data URL complète, seulement les données utiles à l'appel API.
-let _quizIAMode = "texte";
+// Génération uniquement par photo du cours (prise/choisie par l'élève, lue par
+// l'IA multimodale) — le mode "sujet texte libre" a été retiré : sans support
+// visuel, l'IA invente trop facilement du contenu hors-programme.
+// _quizIAPhotoBase64/_quizIAPhotoMime ne contiennent jamais la data URL complète,
+// seulement les données utiles à l'appel API.
 let _quizIAPhotoBase64 = null;
 let _quizIAPhotoMime = null;
+
+function _quizIALireNbQuestions() {
+  const el = document.getElementById("quizia-nb-questions");
+  let n = parseInt(el?.value, 10);
+  if (!Number.isFinite(n)) n = QUIZ_IA_NB_QUESTIONS_DEFAUT;
+  return Math.min(QUIZ_IA_NB_QUESTIONS_MAX, Math.max(QUIZ_IA_NB_QUESTIONS_MIN, n));
+}
+
+// ── "Mes quiz IA" — historique local des quiz générés par l'élève ──────────
+// Conservé dans localStorage (propre à l'appareil) pour que l'élève puisse
+// rejouer un quiz déjà généré sans consommer une nouvelle génération, ou le
+// supprimer s'il n'en veut plus. Totalement indépendant de quiz_ia_pending
+// (qui sert uniquement au contrôle qualité côté équipe LearnUpr).
+function _quizIAMesQuizCharger() {
+  try { return JSON.parse(localStorage.getItem("mesQuizIA") || "[]"); }
+  catch(e) { return []; }
+}
+function _quizIAMesQuizSauvegarder(entree) {
+  const liste = _quizIAMesQuizCharger();
+  liste.unshift(entree);
+  while (liste.length > QUIZ_IA_HISTORIQUE_MAX) liste.pop();
+  localStorage.setItem("mesQuizIA", JSON.stringify(liste));
+}
+function ouvrirMesQuizIA() {
+  document.getElementById("mesQuizIAModal")?.classList.add("show");
+  renderMesQuizIA();
+}
+function fermerMesQuizIA() {
+  document.getElementById("mesQuizIAModal")?.classList.remove("show");
+}
+function renderMesQuizIA() {
+  const list = document.getElementById("mesQuizIAList");
+  if (!list) return;
+  const liste = _quizIAMesQuizCharger();
+  if (!liste.length) {
+    list.innerHTML = `<div class="empty-state">📭 Aucun quiz IA généré pour l'instant. Génère ton premier quiz depuis 🎬 Quiz IA !</div>`;
+    return;
+  }
+  list.innerHTML = liste.map(item => `
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:12px;margin-bottom:10px">
+      <div style="font-weight:800;font-size:13px;color:var(--p)">📘 ${item.classe || ""} · ${(typeof NOMS_MATIERES!=='undefined' && NOMS_MATIERES[item.matiere]) || item.matiere || ""}</div>
+      <div style="font-size:11px;color:var(--t2);margin:2px 0 6px">${item.chapitre || ""}</div>
+      <div style="font-size:10px;color:var(--t3);margin-bottom:8px">🗓️ ${item.date || ""} · ${item.questions.length} questions</div>
+      <div style="display:flex;gap:6px">
+        <button onclick="_quizIARejouer('${item.id}')" style="flex:1;background:linear-gradient(135deg,var(--p),var(--p2));color:white;border:none;border-radius:10px;padding:9px;font-weight:800;font-size:11px;cursor:pointer">▶️ Rejouer</button>
+        <button onclick="_quizIASupprimerHisto('${item.id}')" style="background:#fee2e2;color:#991B1B;border:none;border-radius:10px;padding:9px 12px;font-weight:800;font-size:11px;cursor:pointer">🗑️</button>
+      </div>
+    </div>
+  `).join("");
+}
+function _quizIARejouer(id) {
+  const item = _quizIAMesQuizCharger().find(q => q.id === id);
+  if (!item) return;
+  fermerMesQuizIA();
+  _quizIALancerLocal(item.questions, item.classe, item.matiere, item.chapitre);
+}
+function _quizIASupprimerHisto(id) {
+  if (!confirm("Supprimer ce quiz de ton historique ?")) return;
+  const liste = _quizIAMesQuizCharger().filter(q => q.id !== id);
+  localStorage.setItem("mesQuizIA", JSON.stringify(liste));
+  renderMesQuizIA();
+}
 
 // ── Classement automatique des chapitres (évite les doublons quasi-identiques) ──
 // Compare le chapitre saisi par l'élève aux chapitres déjà présents dans la
@@ -1087,13 +1154,52 @@ function _levenshtein(a, b) {
   }
   return prev[n];
 }
-function _similariteChapitre(a, b) {
+function _similariteChapitreTexte(a, b) {
   const na = _normaliserTexteChapitre(a), nb = _normaliserTexteChapitre(b);
   if (!na || !nb) return 0;
   if (na === nb) return 1;
   const maxLen = Math.max(na.length, nb.length);
   return maxLen === 0 ? 1 : 1 - (_levenshtein(na, nb) / maxLen);
 }
+
+// ── Détection par mots-clés (complète la similarité texte ci-dessus) ────────
+// Utile quand deux intitulés partagent la même notion mais ont des longueurs
+// très différentes ("Fractions" vs "Les fractions : addition et soustraction"),
+// cas où la distance de Levenshtein sur la chaîne entière reste faible alors
+// que le sujet est identique.
+const _MOTS_VIDES_CHAPITRE = new Set([
+  "le","la","les","l","de","des","du","un","une","et","en","sur","au","aux",
+  "a","à","ou","dans","pour","par","avec","sans","ce","ces","cet","cette",
+  "son","sa","ses","d","qui","que","est","sont","au","chapitre","lecon",
+  "partie","notion","notions","exercice","exercices","cours"
+]);
+function _motsClesChapitre(s) {
+  return new Set(
+    _normaliserTexteChapitre(s)
+      .split(" ")
+      .filter(mot => mot.length >= 3 && !_MOTS_VIDES_CHAPITRE.has(mot))
+  );
+}
+function _scoreMotsClesChapitre(a, b) {
+  const ma = _motsClesChapitre(a), mb = _motsClesChapitre(b);
+  if (!ma.size || !mb.size) return 0;
+  let communs = 0;
+  for (const mot of ma) if (mb.has(mot)) communs++;
+  // Coefficient de chevauchement (par rapport au plus petit ensemble) : un
+  // intitulé court entièrement contenu dans un intitulé plus long obtient un
+  // score élevé, ce qui est le comportement voulu pour du classement par mots-clés.
+  return communs / Math.min(ma.size, mb.size);
+}
+// Score combiné utilisé pour le classement des chapitres : le meilleur des
+// deux angles (proximité de la chaîne entière, ou mots-clés en commun).
+function _similariteChapitre(a, b) {
+  return Math.max(_similariteChapitreTexte(a, b), _scoreMotsClesChapitre(a, b));
+}
+
+// Classe le chapitre saisi (par l'élève au moment de la génération, ou relu
+// au moment de la validation modérateur) dans un chapitre déjà existant pour
+// cette classe/matière si la ressemblance (texte ou mots-clés) dépasse 70% —
+// évite les doublons de chapitres dans la banque de quiz.
 async function _normaliserChapitreIA(classe, matiere, chapitreSaisi) {
   const saisi = (chapitreSaisi || "").trim();
   if (!saisi || !turso) return saisi;
@@ -1175,26 +1281,14 @@ function ouvrirGenerateurQuizIA() {
   if (statusEl) statusEl.style.display = "none";
   document.getElementById("quizia-chapitre").value = "";
   document.getElementById("quizia-sujet").value = "";
-  quizIABasculerMode("texte");
+  const nbSel = document.getElementById("quizia-nb-questions");
+  if (nbSel) nbSel.value = String(QUIZ_IA_NB_QUESTIONS_DEFAUT);
   quizIARetirerPhoto();
   document.getElementById("quizIAGenModal")?.classList.add("show");
 }
 
 function fermerGenerateurQuizIA() {
   document.getElementById("quizIAGenModal")?.classList.remove("show");
-}
-
-// ── Bascule entre les deux modes de génération (sujet texte / photo du cours) ──
-function quizIABasculerMode(mode) {
-  _quizIAMode = (mode === "photo") ? "photo" : "texte";
-  const zoneTexte = document.getElementById("quizia-zone-texte");
-  const zonePhoto = document.getElementById("quizia-zone-photo");
-  const btnTexte  = document.getElementById("quizia-mode-texte");
-  const btnPhoto  = document.getElementById("quizia-mode-photo");
-  if (zoneTexte) zoneTexte.style.display = (_quizIAMode === "texte") ? "block" : "none";
-  if (zonePhoto) zonePhoto.style.display = (_quizIAMode === "photo") ? "block" : "none";
-  if (btnTexte) { btnTexte.style.background = (_quizIAMode === "texte") ? "var(--p)" : "var(--card)"; btnTexte.style.color = (_quizIAMode === "texte") ? "white" : "var(--t1)"; }
-  if (btnPhoto) { btnPhoto.style.background = (_quizIAMode === "photo") ? "var(--p)" : "var(--card)"; btnPhoto.style.color = (_quizIAMode === "photo") ? "white" : "var(--t1)"; }
 }
 
 // ── Lecture de la photo choisie/prise par l'élève, compressée puis convertie en base64 pour l'IA ──
@@ -1257,6 +1351,11 @@ function quizIAUpdateMatieres() {
 // Alias conservé pour cohérence avec les autres selects classe→matière (aucun 3ᵉ niveau ici, le chapitre est en texte libre)
 function quizIAUpdateChapitres() {}
 
+// Lance la génération puis ferme immédiatement le générateur : l'élève n'a
+// plus besoin de rester sur l'écran d'attente, il peut continuer à naviguer
+// dans l'app pendant que l'IA travaille en arrière-plan. Il est averti par une
+// notification (toast) dès que son quiz est prêt, et peut alors le jouer —
+// tout de suite depuis la notification, ou plus tard depuis "📚 Mes quiz IA".
 async function genererQuizIA() {
   if (!checkPremium()) { openPremiumGate("quizia"); return; }
   if (_quizIACompteurAujourdhui() >= QUIZ_IA_DAILY_MAX) {
@@ -1267,63 +1366,53 @@ async function genererQuizIA() {
   const mat      = document.getElementById("quizia-matiere")?.value || "";
   let   chapitre = document.getElementById("quizia-chapitre")?.value?.trim() || "";
   const sujet    = document.getElementById("quizia-sujet")?.value?.trim() || "";
-  const modePhoto = (_quizIAMode === "photo");
-  if (!classe) { showToast("❌ Choisis la classe", "error"); return; }
-  if (!mat)    { showToast("❌ Choisis la matière", "error"); return; }
-  if (modePhoto && !_quizIAPhotoBase64) { showToast("❌ Prends ou choisis d'abord une photo de ton cours", "error"); return; }
+  const nbQuestions = _quizIALireNbQuestions();
+  if (!classe)    { showToast("❌ Choisis la classe", "error"); return; }
+  if (!mat)       { showToast("❌ Choisis la matière", "error"); return; }
+  if (!chapitre)  { showToast("❌ Le chapitre est obligatoire", "error"); return; }
+  if (!_quizIAPhotoBase64) { showToast("❌ Prends ou choisis d'abord une photo de ton cours", "error"); return; }
+
+  const photoData = { mimeType: _quizIAPhotoMime, base64: _quizIAPhotoBase64 };
+  _quizIAIncrementerCompteur();
+  fermerGenerateurQuizIA();
+  showToast("🤖 Génération lancée en arrière-plan, on te prévient dès que c'est prêt !", "info");
 
   // Classement automatique : si le chapitre saisi ressemble à ≥70% à un chapitre
   // déjà utilisé pour cette classe/matière, on réutilise le nom existant tel
   // quel — évite les doublons ("Les fractions" / "fraction" / "Fractions " ...)
-  if (chapitre) chapitre = await _normaliserChapitreIA(classe, mat, chapitre);
+  _quizIAGenererEnArrierePlan(classe, mat, chapitre, sujet, nbQuestions, photoData);
+}
 
-  const btn = document.getElementById("quizIAGenBtn");
-  const statusEl = document.getElementById("quizIAGenStatus");
-  if (btn) { btn.disabled = true; btn.style.opacity = "0.6"; btn.textContent = "⏳ Génération en cours..."; }
-  if (statusEl) {
-    statusEl.style.display = "block";
-    statusEl.style.background = "var(--bg)"; statusEl.style.color = "var(--t2)";
-    statusEl.textContent = modePhoto
-      ? "🤖 L'IA lit le contenu de ta photo et prépare tes questions, patiente quelques secondes..."
-      : "🤖 L'IA prépare tes questions, patiente quelques secondes...";
-  }
-
+async function _quizIAGenererEnArrierePlan(classe, mat, chapitre, sujet, nbQuestions, photoData) {
   try {
-    const prompt = _construirePromptQuizIA(classe, mat, chapitre, sujet, QUIZ_IA_NB_QUESTIONS, modePhoto);
-    const imageData = modePhoto ? { mimeType: _quizIAPhotoMime, base64: _quizIAPhotoBase64 } : null;
-    const { texte, fournisseur } = await _appelIAQuizFailover(prompt, imageData);
+    chapitre = await _normaliserChapitreIA(classe, mat, chapitre);
+    const prompt = _construirePromptQuizIA(classe, mat, chapitre, sujet, nbQuestions);
+    const { texte, fournisseur } = await _appelIAQuizFailover(prompt, photoData);
     const questions = _parserQuestionsQuizIA(texte);
-    if (!questions.length) throw new Error(modePhoto
-      ? "L'IA n'a pas trouvé de contenu de cours exploitable sur cette photo (image floue, illisible ou incomplète ?). Réessaie avec une photo plus nette et bien cadrée."
-      : "L'IA n'a renvoyé aucune question exploitable, réessaie.");
+    if (!questions.length) throw new Error(
+      "L'IA n'a pas trouvé de contenu de cours exploitable sur cette photo (image floue, illisible ou incomplète ?). Réessaie avec une photo plus nette et bien cadrée."
+    );
 
-    _quizIAIncrementerCompteur();
+    // Conservé côté élève pour qu'il puisse rejouer ou supprimer ce quiz plus
+    // tard, indépendamment de la vérification par l'équipe LearnUpr ci-dessous.
+    const entree = { id: "qia_" + Date.now(), classe, matiere: mat, chapitre, sujet, questions, date: new Date().toLocaleDateString("fr-FR") };
+    _quizIAMesQuizSauvegarder(entree);
 
-    // Copie envoyée en arrière-plan pour un contrôle qualité interne (équipe
-    // LearnUpr uniquement) — l'élève n'en sait rien et n'en dépend pas : son
-    // quiz est jouable tout de suite, que cette sauvegarde réussisse ou non.
+    // Copie envoyée en arrière-plan à l'équipe LearnUpr : si validée par un
+    // modérateur, ses questions rejoignent le pool général des quiz élèves.
+    // L'élève n'en dépend pas : son propre quiz est déjà jouable, que cette
+    // sauvegarde réussisse ou non.
     if (turso) {
       turso.execute({
         sql: `INSERT INTO quiz_ia_pending (classe,matiere,chapitre,sujet,questions,fournisseur,auteur,statut,date,source) VALUES (?,?,?,?,?,?,?,?,?,?)`,
         args: [classe, mat, chapitre, sujet, JSON.stringify(questions), fournisseur,
-               localStorage.getItem("userPhone") || "élève", "attente", new Date().toLocaleDateString("fr-FR"),
-               modePhoto ? "photo" : "texte"]
+               localStorage.getItem("userPhone") || "élève", "attente", new Date().toLocaleDateString("fr-FR"), "photo"]
       }).catch(e => console.warn("Quiz IA — sauvegarde contrôle qualité (arrière-plan):", e.message));
     }
 
-    if (statusEl) {
-      statusEl.style.background = "linear-gradient(135deg,#d1fae5,#ecfdf5)"; statusEl.style.color = "#065F46";
-      statusEl.textContent = `✅ Ton quiz est prêt (${questions.length} questions) !`;
-    }
-    fermerGenerateurQuizIA();
-    _quizIALancerLocal(questions, classe, mat, chapitre);
+    showToast(`✅ Ton quiz est prêt (${questions.length} questions) — va dans 📚 Mes quiz IA pour le jouer !`, "success");
   } catch(e) {
-    if (statusEl) {
-      statusEl.style.background = "#fee2e2"; statusEl.style.color = "#991B1B";
-      statusEl.textContent = "❌ " + (e.message || "Erreur lors de la génération, réessaie.");
-    }
-  } finally {
-    if (btn) { btn.disabled = false; btn.style.opacity = "1"; btn.textContent = "✨ Générer le quiz"; }
+    showToast("❌ " + (e.message || "Erreur lors de la génération de ton quiz IA, réessaie."), "error");
   }
 }
 
@@ -1333,6 +1422,7 @@ async function genererQuizIA() {
 // de son cours ; réutilise le même moteur (quizState/afficherQuestion) que
 // lancerQuiz(), juste avec les questions IA au lieu de la banque de questions.
 function _quizIALancerLocal(questions, classe, mat, chapitre) {
+  showTab("quiz"); // au cas où l'élève lance ce quiz depuis un autre onglet (notification, historique...)
   quizState.matiere = mat;
   quizState.score = 0;
   quizState.current = 0;

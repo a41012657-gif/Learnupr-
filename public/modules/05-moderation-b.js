@@ -3213,19 +3213,18 @@ async function _blobEnBase64(blob) {
 // Appel bas niveau à l'API Gemini avec une clé donnée — utilisé à la fois par
 // _iaAnalyserAvecGemini (production) et testerConnexionGemini (diagnostic admin).
 // ⚠️ MODÈLE À SURVEILLER : Google arrête régulièrement les anciens modèles
-// Gemini (gemini-2.0-flash a été coupé le 1er juin 2026, remplacé ici par
-// gemini-2.5-flash). gemini-2.5-flash est lui-même annoncé pour un arrêt
-// autour du 16 octobre 2026, avec gemini-3.5-flash (ou plus récent) comme
-// remplacement prévu. Si "Tester connexion Gemini" recommence à échouer après
-// cette date avec une erreur indiquant un modèle introuvable/invalide, c'est
-// très probablement la cause : il suffit de changer le nom du modèle ci-
-// dessous (une seule ligne, ce code est centralisé pour tous les usages).
+// Gemini (gemini-2.0-flash coupé le 1er juin 2026 ; gemini-2.5-flash à son tour
+// annoncé pour un arrêt le 16 octobre 2026). Pour éviter de devoir changer ce
+// nom à chaque fois, on utilise l'alias "gemini-flash-latest" qui pointe
+// toujours vers le dernier modèle Flash stable de Google — plus besoin d'y
+// toucher lors des prochaines dépréciations. Si "Tester connexion Gemini"
+// échoue un jour avec une erreur de modèle introuvable malgré tout, vérifier
+// https://ai.google.dev/gemini-api/docs/models pour un éventuel changement
+// de convention de nommage des alias.
 async function _appelGeminiBrut(apiKey, parts, opts) {
-  // Modèle Gemini 2.5 Flash — gemini-2.0-flash a été définitivement arrêté par
-  // Google le 1er juin 2026 (toute requête vers ce nom de modèle renvoie une
-  // erreur), donc 2.5-flash est le remplacement direct recommandé par Google.
-  // temperature=0.1 pour des réponses stables et déterministes.
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+  // Alias "dernier modèle Flash stable" — évite la maintenance manuelle du nom
+  // de modèle à chaque dépréciation. temperature=0.1 pour des réponses stables.
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -3399,15 +3398,15 @@ async function _appelMistralVision(apiKey, promptTexte, imageData) {
 
 // Construit le prompt de génération d'un quiz par IA — même exigence de rigueur
 // factuelle que l'analyse de documents, adaptée au programme scolaire camerounais.
-// depuisPhoto=true : une image est jointe à l'appel (voir _appelIAQuizFailover),
-// le quiz doit alors se baser UNIQUEMENT sur le contenu visible de cette photo.
-function _construirePromptQuizIA(classe, matiere, chapitre, sujet, nbQuestions, depuisPhoto) {
+// Génération UNIQUEMENT à partir d'une photo du cours (mode "sujet texte libre"
+// retiré) : une image est toujours jointe à l'appel (voir _appelIAQuizFailover),
+// le quiz doit se baser EXCLUSIVEMENT sur le contenu visible de cette photo.
+function _construirePromptQuizIA(classe, matiere, chapitre, sujet, nbQuestions) {
   const matLabel = (typeof NOMS_MATIERES !== "undefined" && NOMS_MATIERES[matiere]) || matiere || "culture générale";
 
-  if (depuisPhoto) {
-    return `Tu es un professeur camerounais expérimenté qui prépare un quiz scolaire pour l'application éducative LearnUpr.
+  return `Tu es un professeur camerounais expérimenté qui prépare un quiz scolaire pour l'application éducative LearnUpr.
 
-Une photo d'un cours (cahier, manuel, fiche) est jointe à ce message, niveau scolaire "${classe || "non précisé"}", matière "${matLabel}"${chapitre ? `, chapitre indiqué par l'élève : "${chapitre}"` : ""}${sujet ? `, précision de l'élève : "${sujet}"` : ""}.
+Une photo d'un cours (cahier, manuel, fiche) est jointe à ce message, niveau scolaire "${classe || "non précisé"}", matière "${matLabel}", chapitre : "${chapitre}"${sujet ? `, précision de l'élève : "${sujet}"` : ""}.
 
 INSTRUCTION PRINCIPALE : Lis attentivement le contenu visible sur la photo (texte du cours, définitions, exemples, énoncés d'exercices, schémas légendés) et génère exactement ${nbQuestions} questions à choix multiples (QCM) portant UNIQUEMENT sur ce contenu.
 - N'invente aucune notion absente de la photo.
@@ -3417,21 +3416,6 @@ RÈGLES STRICTES (si des questions sont possibles) :
 - Chaque question a exactement 4 choix, une seule bonne réponse.
 - Questions factuellement exactes, non ambiguës, fidèles au contenu réel de la photo.
 - LANGAGE SIMPLE : phrases courtes et claires, vocabulaire accessible à un élève de "${classe || "collège/lycée"}". N'utilise une notation ou une expression mathématique QUE si elle est strictement indispensable au sens de la question (ex: une formule, une équation) — jamais de formalisme superflu qui complique la lecture.
-- Explication courte : une seule phrase simple (max 15 mots), pas de jargon.
-- Réponds STRICTEMENT avec un tableau JSON, sans aucun texte avant/après, sans balises markdown, format exact :
-[{"q":"texte de la question","c":["choix A","choix B","choix C","choix D"],"r":0,"explication":"courte explication (1 phrase) de la bonne réponse"}]
-- "r" est l'INDEX entier (0 à 3) du bon choix dans le tableau "c".`;
-  }
-
-  return `Tu es un professeur camerounais expérimenté qui prépare un quiz scolaire pour l'application éducative LearnUpr.
-
-Génère exactement ${nbQuestions} questions à choix multiples (QCM), niveau scolaire "${classe || "non précisé"}", matière "${matLabel}"${chapitre ? `, chapitre "${chapitre}"` : ""}${sujet ? `, sur le sujet précis suivant : "${sujet}"` : ""}.
-
-RÈGLES STRICTES :
-- Chaque question a exactement 4 choix, une seule bonne réponse.
-- Questions factuellement exactes, non ambiguës, adaptées au programme camerounais.
-- N'invente aucun fait douteux ; reste sur des notions de programme scolaire classiques.
-- LANGAGE SIMPLE : phrases courtes et claires, vocabulaire accessible à un élève de "${classe || "collège/lycée"}". N'utilise une notation ou une expression mathématique QUE si elle est strictement indispensable au sens de la question — jamais de formalisme superflu qui complique la lecture.
 - Explication courte : une seule phrase simple (max 15 mots), pas de jargon.
 - Réponds STRICTEMENT avec un tableau JSON, sans aucun texte avant/après, sans balises markdown, format exact :
 [{"q":"texte de la question","c":["choix A","choix B","choix C","choix D"],"r":0,"explication":"courte explication (1 phrase) de la bonne réponse"}]
@@ -3534,10 +3518,15 @@ async function _validerQuizIA(id) {
   if (!item) return;
   if (!confirm(`Valider ce quiz IA et publier ses ${item.questions.length} question(s) auprès des élèves ?`)) return;
   showToast("⏳ Publication en cours...", "info");
+  // Reclassement du chapitre au moment de la validation (et non plus seulement
+  // à la génération) : la banque a pu évoluer entre-temps (d'autres quiz
+  // validés depuis), donc on revérifie ici s'il existe déjà un chapitre très
+  // proche (texte ou mots-clés en commun) pour ne jamais créer de doublon.
+  const chapitreClasse = await _normaliserChapitreIA(item.classe, item.matiere, item.chapitre || "Général");
   const sourceTag = `IA:${item.sujet || item.chapitre || "généré"}`;
   let ok = 0;
   for (const q of item.questions) {
-    const newQ = { classe: item.classe, matiere: item.matiere, chapitre: item.chapitre || "Général", q: q.q, c: q.c, r: q.r, source: sourceTag, explication: q.explication || "" };
+    const newQ = { classe: item.classe, matiere: item.matiere, chapitre: chapitreClasse, q: q.q, c: q.c, r: q.r, source: sourceTag, explication: q.explication || "" };
     const tursoId = await sauvegarderQuizDansTurso(newQ);
     if (tursoId) { newQ.id = tursoId; ok++; } else { newQ.id = Date.now() + Math.random(); }
     customQuizQuestions.push(newQ);
