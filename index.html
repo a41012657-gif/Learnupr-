@@ -463,6 +463,7 @@
               <button onclick="lancerQuiz()" style="width:100%;background:linear-gradient(135deg,var(--p),var(--p2));color:white;border:none;border-radius:14px;padding:15px;font-weight:900;font-size:14px;cursor:pointer">🚀 Lancer le Quiz</button>
               <button onclick="lancerRevisionExpress()" style="width:100%;margin-top:8px;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#1A1530;border:none;border-radius:14px;padding:13px;font-weight:900;font-size:13px;cursor:pointer">⚡ Révision Express (10 questions mix)</button>
               <button onclick="ouvrirGenerateurQuizIA()" style="width:100%;margin-top:8px;background:linear-gradient(135deg,#4338CA,#6D28D9);color:white;border:none;border-radius:14px;padding:13px;font-weight:900;font-size:13px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px">🎬 Générer un Quiz par IA <span id="quizIABadgePremium" style="font-size:9px;font-weight:800;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#1A1530;padding:2px 7px;border-radius:8px">⭐ Premium</span></button>
+              <button onclick="ouvrirMesQuizIA()" style="width:100%;margin-top:8px;background:var(--card);border:1.5px solid var(--border);color:var(--t1);border-radius:14px;padding:12px;font-weight:800;font-size:12px;cursor:pointer">📚 Mes quiz IA (rejouer / supprimer)</button>
               <!-- Bannière premium quiz -->
               <div id="quiz-premium-banner" style="display:none;margin-top:10px;background:linear-gradient(135deg,var(--gold),var(--gold2));border-radius:12px;padding:12px;cursor:pointer" onclick="openPremiumGate('quiz')">
                 <div style="color:white;font-weight:900;font-size:12px">⭐ Passez Premium pour débloquer</div>
@@ -1103,7 +1104,7 @@
     </div>
     <div style="background:linear-gradient(135deg,#ECFDF5,#F0FDFA);border-radius:12px;padding:12px;margin-bottom:12px;border:1px solid #16A34A">
       <div style="font-size:10px;font-weight:700;color:#15803D;margin-bottom:4px">🆓 Fournisseur IA de secours (gratuit) — bascule auto si Gemini tombe en panne</div>
-      <div style="font-size:9px;color:var(--t3);margin-bottom:8px">Utilisé pour Quiz IA (texte ET photo), en repli si les clés Gemini ci-dessus échouent toutes (panne/quota). Compatible avec toute API au format "OpenAI chat completions" — ex: <a href="https://console.groq.com/keys" target="_blank" style="color:#15803D">Groq</a> (gratuit, rapide). Pour que le mode <b>photo de cours</b> fonctionne ici aussi, choisis un modèle Groq capable de lire des images (vision), actuellement <code>qwen/qwen3.6-27b</code> — sinon ce secours ne servira qu'au mode texte. ⚠️ Groq change souvent son modèle vision disponible (l'ancien <code>llama-4-scout</code> a été retiré mi-2026) : si ce modèle ne répond plus un jour, vérifie <a href="https://console.groq.com/docs/vision" target="_blank" style="color:#15803D">console.groq.com/docs/vision</a> pour le nom du modèle actuel. Laisse vide si tu n'en veux pas.</div>
+      <div style="font-size:9px;color:var(--t3);margin-bottom:8px">Utilisé pour Quiz IA (génération par photo de cours), en repli si les clés Gemini ci-dessus échouent toutes (panne/quota). Compatible avec toute API au format "OpenAI chat completions" — ex: <a href="https://console.groq.com/keys" target="_blank" style="color:#15803D">Groq</a> (gratuit, rapide). ⚠️ Important : Quiz IA fonctionne uniquement par photo désormais, donc ce secours DOIT utiliser un modèle Groq capable de lire des images (vision), actuellement <code>qwen/qwen3.6-27b</code> — sinon ce secours ne servira à rien pour Quiz IA. ⚠️ Groq change souvent son modèle vision disponible (l'ancien <code>llama-4-scout</code> a été retiré mi-2026) : si ce modèle ne répond plus un jour, vérifie <a href="https://console.groq.com/docs/vision" target="_blank" style="color:#15803D">console.groq.com/docs/vision</a> pour le nom du modèle actuel. Laisse vide si tu n'en veux pas.</div>
       <div style="font-size:9px;font-weight:700;color:#15803D;margin-bottom:3px">URL de l'API (endpoint chat completions)</div>
       <input id="cfg-iaSecoursUrl" type="text" class="input" placeholder="https://api.groq.com/openai/v1/chat/completions" autocomplete="off" style="margin-bottom:8px;font-size:14px">
       <div style="font-size:9px;font-weight:700;color:#15803D;margin-bottom:3px">Clé API</div>
@@ -1111,8 +1112,8 @@
         <input id="cfg-iaSecoursKey" type="password" class="input" placeholder="gsk_... ou sk-or-..." autocomplete="off" style="margin-bottom:0;font-size:16px;padding-right:40px">
         <button onclick="toggleCfgVisibility('cfg-iaSecoursKey',this)" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:16px">👁️</button>
       </div>
-      <div style="font-size:9px;font-weight:700;color:#15803D;margin-bottom:3px">Nom du modèle</div>
-      <input id="cfg-iaSecoursModel" type="text" class="input" placeholder="openai/gpt-oss-120b (ou qwen/qwen3.6-27b pour la photo)" autocomplete="off" style="margin-bottom:0;font-size:14px">
+      <div style="font-size:9px;font-weight:700;color:#15803D;margin-bottom:3px">Nom du modèle (vision obligatoire)</div>
+      <input id="cfg-iaSecoursModel" type="text" class="input" placeholder="qwen/qwen3.6-27b (modèle vision Groq actuel)" autocomplete="off" style="margin-bottom:0;font-size:14px">
     </div>
     <div style="background:linear-gradient(135deg,#FFF7ED,#FFFBEB);border-radius:12px;padding:12px;margin-bottom:12px;border:1px solid #EA580C">
       <div style="font-size:10px;font-weight:700;color:#C2410C;margin-bottom:4px">📷 Mistral (secours n°2, dédié à la photo de cours)</div>
@@ -1942,23 +1943,30 @@
       <div id="quizIAGenCompteur" style="color:rgba(255,255,255,0.75);font-size:11px;margin-top:6px">—</div>
     </div>
     <div style="overflow-y:auto;flex:1;padding:16px">
-      <div style="display:flex;gap:8px;margin-bottom:14px">
-        <button id="quizia-mode-texte" type="button" onclick="quizIABasculerMode('texte')" style="flex:1;border:1px solid var(--border);border-radius:12px;padding:10px;font-weight:800;font-size:12px;cursor:pointer;background:var(--card);color:var(--t1)">📝 Sujet texte</button>
-        <button id="quizia-mode-photo" type="button" onclick="quizIABasculerMode('photo')" style="flex:1;border:1px solid var(--border);border-radius:12px;padding:10px;font-weight:800;font-size:12px;cursor:pointer;background:var(--card);color:var(--t1)">📷 Photo du cours</button>
-      </div>
       <div style="font-size:11px;font-weight:700;color:var(--t2);margin-bottom:5px">Classe</div>
       <select id="quizia-classe" class="input" onchange="quizIAUpdateMatieres()"></select>
       <div style="font-size:11px;font-weight:700;color:var(--t2);margin-bottom:5px">Matière</div>
       <select id="quizia-matiere" class="input" onchange="quizIAUpdateChapitres()"></select>
-      <div style="font-size:11px;font-weight:700;color:var(--t2);margin-bottom:5px">Chapitre (optionnel)</div>
-      <input id="quizia-chapitre" class="input" placeholder="Ex: Les fractions">
+      <div style="font-size:11px;font-weight:700;color:var(--t2);margin-bottom:5px">Chapitre</div>
+      <input id="quizia-chapitre" class="input" placeholder="Ex: Les fractions" required>
+      <div style="font-size:11px;font-weight:700;color:var(--t2);margin-bottom:5px">Sujet précis (optionnel)</div>
+      <textarea id="quizia-sujet" class="input" rows="2" placeholder="Ex: Les figures de style en poésie" style="resize:none"></textarea>
+      <div style="font-size:11px;font-weight:700;color:var(--t2);margin-bottom:5px">Nombre de questions</div>
+      <select id="quizia-nb-questions" class="input" style="margin-bottom:14px">
+        <option value="10">10 questions</option>
+        <option value="11">11 questions</option>
+        <option value="12" selected>12 questions</option>
+        <option value="13">13 questions</option>
+        <option value="14">14 questions</option>
+        <option value="15">15 questions</option>
+        <option value="16">16 questions</option>
+        <option value="17">17 questions</option>
+        <option value="18">18 questions</option>
+        <option value="19">19 questions</option>
+        <option value="20">20 questions</option>
+      </select>
 
-      <div id="quizia-zone-texte">
-        <div style="font-size:11px;font-weight:700;color:var(--t2);margin-bottom:5px">Sujet précis (optionnel)</div>
-        <textarea id="quizia-sujet" class="input" rows="2" placeholder="Ex: Les figures de style en poésie" style="resize:none"></textarea>
-      </div>
-
-      <div id="quizia-zone-photo" style="display:none">
+      <div id="quizia-zone-photo">
         <div style="font-size:11px;font-weight:700;color:var(--t2);margin-bottom:5px">Photo de ton cours</div>
         <div style="display:flex;gap:8px">
           <label for="quizia-photo-cam" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;border:2px dashed var(--border);border-radius:14px;padding:14px 8px;cursor:pointer;background:var(--card);font-size:12px;font-weight:700;color:var(--t2)">
@@ -1978,7 +1986,23 @@
 
       <div id="quizIAGenStatus" style="display:none;margin:8px 0;padding:10px;border-radius:10px;font-size:11px;font-weight:700;text-align:center"></div>
       <button id="quizIAGenBtn" onclick="genererQuizIA()" style="width:100%;background:linear-gradient(135deg,var(--p),var(--p2));color:white;border:none;border-radius:14px;padding:15px;font-weight:900;font-size:14px;cursor:pointer;margin-top:6px">✨ Générer le quiz</button>
-      <div style="font-size:9px;color:var(--t3);margin-top:8px;text-align:center">Le quiz est d'abord vérifié par un modérateur avant d'apparaître dans tes quiz.</div>
+      <div style="font-size:9px;color:var(--t3);margin-top:8px;text-align:center">La génération se fait en arrière-plan — tu seras averti(e) dès que ton quiz sera prêt à jouer. Une copie est aussi transmise à l'équipe LearnUpr : si elle est validée, ses questions rejoignent les quiz généraux de tout le monde.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== MODAL "📚 MES QUIZ IA" (historique local : rejouer / supprimer) ========== -->
+<div class="ovl" id="mesQuizIAModal">
+  <div style="background:var(--bg);width:100%;max-width:430px;border-radius:22px 22px 0 0;max-height:90vh;display:flex;flex-direction:column;overflow:hidden">
+    <div style="background:linear-gradient(135deg,var(--p3),var(--p));padding:18px 16px">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div style="font-family:'Space Grotesk',sans-serif;color:white;font-size:17px;font-weight:900">📚 Mes quiz IA</div>
+        <button onclick="fermerMesQuizIA()" style="background:rgba(255,255,255,0.18);border:none;border-radius:10px;padding:6px 12px;color:white;font-weight:700;font-size:12px;cursor:pointer">✕</button>
+      </div>
+      <div style="color:rgba(255,255,255,0.75);font-size:11px;margin-top:6px">Retrouve et rejoue les quiz que tu as générés</div>
+    </div>
+    <div style="overflow-y:auto;flex:1;padding:16px">
+      <div id="mesQuizIAList"></div>
     </div>
   </div>
 </div>
