@@ -34,9 +34,9 @@
   "areaServed": "CM"
 }
 </script>
-<link rel="manifest" id="learnupr-manifest-link">
-<link rel="icon" id="learnupr-favicon" type="image/png">
-<link rel="apple-touch-icon" id="learnupr-apple-icon">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" id="learnupr-favicon" type="image/png" href="/icon-192.png">
+<link rel="apple-touch-icon" id="learnupr-apple-icon" href="/icon-192.png">
 <!-- CONFIG UNIVERSELLE : remplie automatiquement par l'admin, partagée avec tous les utilisateurs -->
 <!-- NE PAS MODIFIER MANUELLEMENT — utilise le panel de config dans l'app -->
 <script id="learnup-embedded-cfg" type="application/json">ICfplhfh9C9RIYEZVlzj4qAx5jfnrfC8La2WXyd9ebQ0ulKIxUMSE9MCf8BkcYom6MmeTwiQVtbD6dq3hF05LUBU0IPDqcgjowfNGk9zEFwyyrvwLdcpBmsHpEEX4wQVBkszLsEi0WkvluO6PFbt6aSyNHHh39RdVLYeBuAPVLK0YPHnB1YTWOV4OfaxyW+inYaWFbDQafC3dHvPENTLccGlwWnjypYdzgDsI66vJ2DHbjlQV5JMbMGqBDXU1vVK4EHs7PNkUTzEAcpas08OqHb0BqQBjocD1ZG8v/A/yrpQNaU7KWAcwpj/fYCVE2/dXWjezRPvxbkMyw5Pz4i6JZrjFVMym2qF2nZsq3YeB+4HjVujImnjlywTbtVvqtVKQzfbtfK1aoLyVr8JKHBYf93bS1okg/+I7KjsxbIfvpiFcKhc/msf8zxMUGX9QgP+qUdE5Rt59/3CkuHK6uYStKDf6Y5ufIjtYFot23YhJfLEFATO4YfqObDqVYGUnMm2VW7Yal6lWLwxfBeJnOwOKE05Z0HKtsi0ujcKScyEY8JrYUQv2Qds+TI316jbBiOvkth1Lv+pGv0bqIAP1k6y1ZBukcL9oWHUDLjy+48v2l3Bl2YWQw3f8i9d0YnxOaAynuh2NfjUgmZFDyVIrxyd05pUpYfYxhRhmhTlECVyevlHCWQ2sKQ5ylYsMySm/qlfcrOKvTJbw4qvQe0/JtiASmpVWY+XX9U=</script>
@@ -45,6 +45,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700;800&amp;family=Inter:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet">
 <!-- PDF.js — rendu PDF natif multiplateforme (différé pour ne pas bloquer le premier affichage) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" defer></script>
+<!-- Puter.js — connexion optionnelle de l'élève pour augmenter son quota Quiz IA (3 → 10/jour). Service tiers indépendant de LearnUpr. -->
+<script src="https://js.puter.com/v2/" defer></script>
 <script defer>
   window.addEventListener("load", function() {
     if (typeof pdfjsLib !== "undefined") {
@@ -1932,7 +1934,24 @@
   </div>
 </div>
 
-<!-- ========== MODAL GÉNÉRATEUR "QUIZ IA" (élève, Premium, 3/jour) ========== -->
+<!-- ========== MODAL CONNEXION PUTER (proposition à l'entrée + reconnexion quand le quota Quiz IA est fini) ========== -->
+<!-- Puter est un service tiers indépendant de LearnUpr : l'élève se connecte avec un compte
+     Puter (email suffit, gratuit) pour faire passer son quota Quiz IA de 3 à 10 générations/jour. -->
+<div class="ovl" id="puterModal">
+  <div style="background:var(--bg);width:100%;max-width:400px;border-radius:22px 22px 0 0;padding:24px 20px 30px">
+    <div style="text-align:center">
+      <div style="font-size:34px;margin-bottom:8px">🚀</div>
+      <div id="puterModalTitre" style="font-family:'Space Grotesk',sans-serif;font-weight:900;font-size:16px;color:var(--text);margin-bottom:8px">Accès facile aux Quiz IA</div>
+      <div id="puterModalTexte" style="font-size:12.5px;color:var(--t2);line-height:1.5;margin-bottom:18px">
+        Connecte-toi avec Puter (compte gratuit, email suffit) pour générer jusqu'à <b>10 quiz IA par jour</b> au lieu de 3. Puter est un service externe indépendant de LearnUpr.
+      </div>
+      <button id="puterConnectBtn" onclick="_puterConnecter()" style="width:100%;background:linear-gradient(135deg,var(--p),var(--p2));color:white;border:none;border-radius:14px;padding:14px;font-weight:900;font-size:13px;cursor:pointer;margin-bottom:10px">Se connecter avec Puter</button>
+      <button id="puterSkipBtn" onclick="_puterFermerModal()" style="width:100%;background:var(--card);border:1px solid var(--border);color:var(--t2);border-radius:14px;padding:13px;font-weight:700;font-size:13px;cursor:pointer">Continuer sans (3 quiz IA/jour)</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== MODAL GÉNÉRATEUR "QUIZ IA" (élève, Premium, 3/jour, 10/jour avec Puter) ========== -->
 <div class="ovl" id="quizIAGenModal">
   <div style="background:var(--bg);width:100%;max-width:430px;border-radius:22px 22px 0 0;max-height:90vh;display:flex;flex-direction:column;overflow:hidden">
     <div style="background:linear-gradient(135deg,var(--p3),var(--p));padding:18px 16px">
