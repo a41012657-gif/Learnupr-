@@ -1271,6 +1271,68 @@ async function sauvegarderPseudo(pseudo) {
   verifierConfigAuDemarrage();
 })();
 
+// ========== PUTER.JS — CONNEXION OPTIONNELLE (booste le quota Quiz IA de 3 à 10/jour) ==========
+// Service tiers indépendant de LearnUpr, présenté clairement comme tel à l'élève.
+// Proposé une fois à l'entrée de l'app, et reproposable à volonté quand le quota
+// Quiz IA journalier (voir 02-contenu-eleve.js) est épuisé.
+const LU_PUTER_CONNECTE_KEY   = "lu_puter_connecte";
+const LU_PUTER_CHOIX_FAIT_KEY = "lu_puter_choix_fait";
+
+function estPuterConnecte() {
+  return localStorage.getItem(LU_PUTER_CONNECTE_KEY) === "true";
+}
+
+// contexte: "entree" (première ouverture de l'app) ou "quota" (limite Quiz IA atteinte)
+function _puterOuvrirModal(contexte) {
+  const titre = document.getElementById("puterModalTitre");
+  const texte = document.getElementById("puterModalTexte");
+  const skipBtn = document.getElementById("puterSkipBtn");
+  if (contexte === "quota") {
+    if (titre) titre.textContent = "Plus de quiz IA pour aujourd'hui";
+    if (texte) texte.innerHTML = "Tu as atteint ta limite de quiz IA aujourd'hui. Connecte-toi avec Puter (compte gratuit, email suffit) pour passer à <b>10 quiz IA par jour</b> dès maintenant. Puter est un service externe indépendant de LearnUpr.";
+    if (skipBtn) skipBtn.textContent = "Revenir demain plutôt";
+  } else {
+    if (titre) titre.textContent = "Accès facile aux Quiz IA";
+    if (texte) texte.innerHTML = "Connecte-toi avec Puter (compte gratuit, email suffit) pour générer jusqu'à <b>10 quiz IA par jour</b> au lieu de 3. Puter est un service externe indépendant de LearnUpr.";
+    if (skipBtn) skipBtn.textContent = "Continuer sans (3 quiz IA/jour)";
+  }
+  document.getElementById("puterModal")?.classList.add("show");
+}
+
+function _puterFermerModal() {
+  localStorage.setItem(LU_PUTER_CHOIX_FAIT_KEY, "true");
+  document.getElementById("puterModal")?.classList.remove("show");
+}
+
+async function _puterConnecter() {
+  const btn = document.getElementById("puterConnectBtn");
+  if (btn) { btn.disabled = true; btn.textContent = "Connexion en cours..."; }
+  try {
+    if (typeof puter === "undefined" || !puter.auth) {
+      throw new Error("Service Puter indisponible pour le moment");
+    }
+    await puter.auth.signIn(); // ouvre une popup Puter — l'élève reste sur LearnUpr en arrière-plan
+    localStorage.setItem(LU_PUTER_CONNECTE_KEY, "true");
+    showToast("✅ Connecté avec Puter — 10 quiz IA/jour débloqués !", "success");
+  } catch(e) {
+    localStorage.setItem(LU_PUTER_CONNECTE_KEY, "false");
+    showToast("❌ Connexion Puter annulée ou indisponible, réessaie plus tard", "error");
+  } finally {
+    localStorage.setItem(LU_PUTER_CHOIX_FAIT_KEY, "true");
+    if (btn) { btn.disabled = false; btn.textContent = "Se connecter avec Puter"; }
+    document.getElementById("puterModal")?.classList.remove("show");
+    // Rafraîchit le compteur affiché si le générateur Quiz IA est ouvert derrière
+    if (typeof _quizIARafraichirCompteurAffiche === "function") _quizIARafraichirCompteurAffiche();
+  }
+}
+
+// Proposition à l'entrée de l'app — une seule fois tant que l'élève n'a pas répondu
+document.addEventListener("DOMContentLoaded", () => {
+  if (!localStorage.getItem(LU_PUTER_CHOIX_FAIT_KEY)) {
+    setTimeout(() => _puterOuvrirModal("entree"), 1200); // léger délai pour laisser l'app s'afficher d'abord
+  }
+});
+
 // ========== TOAST AMÉLIORÉ ==========
 function showToast(msg, type = "default") {
   const t = document.getElementById("toast");

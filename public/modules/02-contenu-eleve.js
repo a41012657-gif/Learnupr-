@@ -1047,7 +1047,14 @@ function quizUpdateChapitres() {
 }
 
 // ========== 🎬 QUIZ IA — GÉNÉRATION PAR L'ÉLÈVE (Premium, 3/jour) ==========
-const QUIZ_IA_DAILY_MAX = 3;
+const QUIZ_IA_DAILY_MAX_SANS_PUTER = 3;
+const QUIZ_IA_DAILY_MAX_AVEC_PUTER = 10;
+// Quota dynamique : 10/jour si l'élève est connecté avec Puter (voir 00-core.js), 3/jour sinon.
+function _quizIADailyMax() {
+  return (typeof estPuterConnecte === "function" && estPuterConnecte())
+    ? QUIZ_IA_DAILY_MAX_AVEC_PUTER
+    : QUIZ_IA_DAILY_MAX_SANS_PUTER;
+}
 const QUIZ_IA_NB_QUESTIONS_MIN = 10;
 const QUIZ_IA_NB_QUESTIONS_MAX = 20;
 const QUIZ_IA_NB_QUESTIONS_DEFAUT = 12;
@@ -1196,33 +1203,54 @@ function _similariteChapitre(a, b) {
   return Math.max(_similariteChapitreTexte(a, b), _scoreMotsClesChapitre(a, b));
 }
 
-// Classe le chapitre saisi (par l'élève au moment de la génération, ou relu
-// au moment de la validation modérateur) dans un chapitre déjà existant pour
-// cette classe/matière si la ressemblance (texte ou mots-clés) dépasse 70% —
-// évite les doublons de chapitres dans la banque de quiz.
-async function _normaliserChapitreIA(classe, matiere, chapitreSaisi) {
-  const saisi = (chapitreSaisi || "").trim();
-  if (!saisi || !turso) return saisi;
+// Récupère la liste des chapitres déjà utilisés en base pour cette classe et
+// cette matière. Utilisé (1) pour donner à l'IA la liste de référence au
+// moment de la génération, afin qu'elle classe le quiz en comparant le
+// contenu RÉEL de la photo à ces chapitres (et pas seulement le texte tapé
+// par l'élève), et (2) comme filet de sécurité textuel ci-dessous.
+async function _recupererChapitresExistants(classe, matiere) {
+  if (!turso) return [];
   try {
     const res = await turso.execute({
       sql: "SELECT DISTINCT chapitre FROM quiz_questions WHERE classe=? AND matiere=? AND chapitre <> ''",
       args: [classe, matiere]
     });
-    let meilleur = null, meilleurScore = 0;
-    for (const row of (res.rows || [])) {
-      const score = _similariteChapitre(saisi, row.chapitre);
-      if (score > meilleurScore) { meilleurScore = score; meilleur = row.chapitre; }
-    }
-    if (meilleur && meilleurScore >= 0.70) return meilleur;
-  } catch(e) { console.warn("Normalisation chapitre — erreur:", e.message); }
+    return (res.rows || []).map(r => r.chapitre).filter(Boolean);
+  } catch(e) {
+    console.warn("Récupération chapitres existants — erreur:", e.message);
+    return [];
+  }
+}
+
+// Filet de sécurité TEXTUEL (secondaire) : classe le chapitre saisi/retenu dans
+// un chapitre déjà existant pour cette classe/matière si la ressemblance
+// (texte ou mots-clés) dépasse 70% — évite les doublons quasi identiques que
+// l'IA aurait pu laisser passer (ex: espace ou majuscule en trop). Le
+// classement PRINCIPAL se fait désormais côté IA, à partir du contenu réel de
+// la photo (voir _construirePromptQuizIA) : cette fonction sert de rattrapage,
+// notamment à la validation modérateur où la banque a pu évoluer entre-temps.
+async function _normaliserChapitreIA(classe, matiere, chapitreSaisi) {
+  const saisi = (chapitreSaisi || "").trim();
+  if (!saisi) return saisi;
+  const chapitresExistants = await _recupererChapitresExistants(classe, matiere);
+  let meilleur = null, meilleurScore = 0;
+  for (const chap of chapitresExistants) {
+    const score = _similariteChapitre(saisi, chap);
+    if (score > meilleurScore) { meilleurScore = score; meilleur = chap; }
+  }
+  if (meilleur && meilleurScore >= 0.70) return meilleur;
   return saisi;
 }
 
 // ── Compression photo côté élève avant envoi à l'IA ──────────────────────
-// Réduit nettement le temps d'upload (utile sur connexion lente) et le temps
-// d'analyse côté IA (image plus légère = traitement plus rapide), sans perte
-// visible pour un contenu de cours (texte/schémas/exercices).
-function _quizIACompresserImage(dataUrl, maxDim = 1400, quality = 0.72) {
+// maxDim=1400 / quality=0.72 (valeurs précédentes) rendaient le texte du
+// cours flou pour l'IA dès que la zone de texte n'occupait qu'une partie du
+// cadre (cahier posé sur un bureau avec d'autres objets autour, par exemple)
+// — le texte semblait lisible à l'œil sur la photo d'origine, mais devenait
+// illisible une fois réduit à 1400px et fortement compressé. On relève donc
+// la résolution et la qualité pour préserver la netteté du texte, au prix
+// d'un fichier un peu plus lourd (toujours acceptable pour Gemini/Groq/Mistral).
+function _quizIACompresserImage(dataUrl, maxDim = 2000, quality = 0.85) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
@@ -1258,13 +1286,17 @@ function _quizIAIncrementerCompteur() {
 
 function ouvrirGenerateurQuizIA() {
   if (!checkPremium()) { openPremiumGate("quizia"); return; }
-  const restant = QUIZ_IA_DAILY_MAX - _quizIACompteurAujourdhui();
+  const max = _quizIADailyMax();
+  const restant = max - _quizIACompteurAujourdhui();
   if (restant <= 0) {
-    showToast("⏳ Limite atteinte : 3 quiz IA par jour. Reviens demain !", "error");
+    _quizIAProposerPuterSiQuotaFini();
     return;
   }
   const compteurEl = document.getElementById("quizIAGenCompteur");
-  if (compteurEl) compteurEl.textContent = `${restant}/${QUIZ_IA_DAILY_MAX} génération(s) restante(s) aujourd'hui`;
+  if (compteurEl) {
+    const viaPuter = (typeof estPuterConnecte === "function" && estPuterConnecte());
+    compteurEl.textContent = `${restant}/${max} génération(s) restante(s) aujourd'hui` + (viaPuter ? " · via Puter" : "");
+  }
 
   // Réutilise la liste des classes visibles pour l'élève
   const classeSel = document.getElementById("quizia-classe");
@@ -1289,6 +1321,33 @@ function ouvrirGenerateurQuizIA() {
 
 function fermerGenerateurQuizIA() {
   document.getElementById("quizIAGenModal")?.classList.remove("show");
+}
+
+// Quota Quiz IA épuisé : si l'élève n'est pas connecté avec Puter, on lui
+// propose de se connecter maintenant pour débloquer 10/jour au lieu de 3.
+// S'il est déjà connecté avec Puter et a quand même atteint 10, on lui dit
+// simplement de revenir demain (rien à proposer de plus pour aujourd'hui).
+function _quizIAProposerPuterSiQuotaFini() {
+  if (typeof estPuterConnecte === "function" && estPuterConnecte()) {
+    showToast("⏳ Limite atteinte : 10 quiz IA par jour. Reviens demain !", "error");
+    return;
+  }
+  if (typeof _puterOuvrirModal === "function") {
+    _puterOuvrirModal("quota");
+  } else {
+    showToast("⏳ Limite atteinte : 3 quiz IA par jour. Reviens demain !", "error");
+  }
+}
+
+// Appelé depuis 00-core.js (_puterConnecter) après une connexion réussie, pour
+// mettre à jour immédiatement le compteur affiché si le générateur est ouvert.
+function _quizIARafraichirCompteurAffiche() {
+  const compteurEl = document.getElementById("quizIAGenCompteur");
+  if (!compteurEl) return;
+  const max = _quizIADailyMax();
+  const restant = max - _quizIACompteurAujourdhui();
+  const viaPuter = (typeof estPuterConnecte === "function" && estPuterConnecte());
+  compteurEl.textContent = `${restant}/${max} génération(s) restante(s) aujourd'hui` + (viaPuter ? " · via Puter" : "");
 }
 
 // ── Lecture de la photo choisie/prise par l'élève, compressée puis convertie en base64 pour l'IA ──
@@ -1358,8 +1417,8 @@ function quizIAUpdateChapitres() {}
 // tout de suite depuis la notification, ou plus tard depuis "📚 Mes quiz IA".
 async function genererQuizIA() {
   if (!checkPremium()) { openPremiumGate("quizia"); return; }
-  if (_quizIACompteurAujourdhui() >= QUIZ_IA_DAILY_MAX) {
-    showToast("⏳ Limite atteinte : 3 quiz IA par jour. Reviens demain !", "error");
+  if (_quizIACompteurAujourdhui() >= _quizIADailyMax()) {
+    _quizIAProposerPuterSiQuotaFini();
     return;
   }
   const classe   = document.getElementById("quizia-classe")?.value || "";
@@ -1375,23 +1434,39 @@ async function genererQuizIA() {
   const photoData = { mimeType: _quizIAPhotoMime, base64: _quizIAPhotoBase64 };
   _quizIAIncrementerCompteur();
   fermerGenerateurQuizIA();
-  showToast("🤖 Génération lancée en arrière-plan, on te prévient dès que c'est prêt !", "info");
+  const viaPuter = (typeof estPuterConnecte === "function" && estPuterConnecte());
+  showToast(
+    viaPuter
+      ? "🤖 Génération lancée via Puter (ton compte connecté), on te prévient dès que c'est prêt !"
+      : "🤖 Génération lancée en arrière-plan, on te prévient dès que c'est prêt !",
+    "info"
+  );
 
-  // Classement automatique : si le chapitre saisi ressemble à ≥70% à un chapitre
-  // déjà utilisé pour cette classe/matière, on réutilise le nom existant tel
-  // quel — évite les doublons ("Les fractions" / "fraction" / "Fractions " ...)
+  // Le classement du chapitre (éviter les doublons du style "Les fractions" /
+  // "fraction" / "Fractions ") est désormais fait par l'IA elle-même à partir
+  // du contenu réel de la photo — voir _quizIAGenererEnArrierePlan ci-dessous.
   _quizIAGenererEnArrierePlan(classe, mat, chapitre, sujet, nbQuestions, photoData);
 }
 
 async function _quizIAGenererEnArrierePlan(classe, mat, chapitre, sujet, nbQuestions, photoData) {
   try {
-    chapitre = await _normaliserChapitreIA(classe, mat, chapitre);
-    const prompt = _construirePromptQuizIA(classe, mat, chapitre, sujet, nbQuestions);
+    // Classement du chapitre par l'IA elle-même : on lui fournit les chapitres
+    // déjà existants pour cette classe/matière, elle compare le contenu RÉEL
+    // de la photo (et pas juste le texte tapé par l'élève) à cette liste et
+    // renvoie le bon nom — ça évite les erreurs de classement (chapitre saisi
+    // mal orthographié, incomplet, ou formulé différemment d'un chapitre déjà
+    // en banque) bien mieux qu'une simple comparaison de texte.
+    const chapitresExistants = await _recupererChapitresExistants(classe, mat);
+    const chapitreSaisi = chapitre;
+    const prompt = _construirePromptQuizIA(classe, mat, chapitreSaisi, sujet, nbQuestions, chapitresExistants);
     const { texte, fournisseur } = await _appelIAQuizFailover(prompt, photoData);
-    const questions = _parserQuestionsQuizIA(texte);
+    const { chapitre: chapitreIA, questions } = _parserReponseQuizIA(texte);
     if (!questions.length) throw new Error(
       "L'IA n'a pas trouvé de contenu de cours exploitable sur cette photo (image floue, illisible ou incomplète ?). Réessaie avec une photo plus nette et bien cadrée."
     );
+    // Filet de sécurité : si l'IA n'a pas renvoyé de chapitre exploitable, on
+    // retombe sur le nom saisi par l'élève, re-vérifié par similarité de texte.
+    chapitre = chapitreIA ? chapitreIA : await _normaliserChapitreIA(classe, mat, chapitreSaisi);
 
     // Conservé côté élève pour qu'il puisse rejouer ou supprimer ce quiz plus
     // tard, indépendamment de la vérification par l'équipe LearnUpr ci-dessous.

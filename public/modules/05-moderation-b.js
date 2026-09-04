@@ -3261,12 +3261,48 @@ async function _appelIAQuizFailover(promptTexte, imageData) {
     ? [{ text: promptTexte }, { inline_data: { mime_type: imageData.mimeType || "image/jpeg", data: imageData.base64 } }]
     : [{ text: promptTexte }];
   let derniereErreur = null;
+  // En mode photo : un fournisseur peut répondre SANS erreur réseau mais en
+  // jugeant lui-même l'image illisible (questions vides) — dans ce cas on ne
+  // s'arrête pas là, on essaie le fournisseur multimodal suivant, au lieu de
+  // considérer l'appel comme réussi. On ne garde ce comportement que pour la
+  // photo : en texte seul, une réponse vide de Gemini est traitée normalement.
+  let meilleurTexteVide = null, meilleurFournisseurVide = null;
+  const essayerEtRetenir = async (appelPromise, fournisseur) => {
+    const texte = await appelPromise;
+    if (imageData && imageData.base64) {
+      const { questions } = _parserReponseQuizIA(texte);
+      if (!questions.length) {
+        // Réponse "vide" (image jugée illisible par ce fournisseur) : on la
+        // garde de côté au cas où AUCUN fournisseur ne trouve de contenu,
+        // mais on continue d'essayer les autres avant d'abandonner.
+        if (!meilleurTexteVide) { meilleurTexteVide = texte; meilleurFournisseurVide = fournisseur; }
+        console.warn(`Quiz IA photo — ${fournisseur} a répondu mais juge l'image illisible, on essaie le fournisseur suivant.`);
+        return null;
+      }
+    }
+    return { texte, fournisseur };
+  };
+  // Si l'élève est connecté avec son propre compte Puter, on essaie EN PREMIER
+  // via Puter (mode photo uniquement, seul mode utilisé par le Quiz IA) — ça
+  // consomme son quota Puter à lui, pas les clés LearnUpr, ce qui justifie le
+  // quota journalier plus élevé (10 au lieu de 3) accordé aux élèves connectés
+  // (voir 02-contenu-eleve.js / estPuterConnecte()). Si Puter échoue, on
+  // retombe normalement sur la cascade Gemini → Groq → Mistral ci-dessous.
+  if (imageData && imageData.base64 && typeof estPuterConnecte === "function" && estPuterConnecte()) {
+    try {
+      const res = await essayerEtRetenir(_appelPuterVision(promptTexte, imageData), "Puter");
+      if (res) return res;
+    } catch(e) {
+      derniereErreur = e;
+      console.warn("Quiz IA photo — échec Puter, bascule sur la cascade LearnUpr:", e.message);
+    }
+  }
   for (let i = 0; i < clesGemini.length; i++) {
     const cle = clesGemini[i];
     if (!cle) continue;
     try {
-      const texte = await _appelGeminiBrut(cle, parts, { maxOutputTokens: 2200 });
-      return { texte, fournisseur: "Gemini" };
+      const res = await essayerEtRetenir(_appelGeminiBrut(cle, parts, { maxOutputTokens: 2200 }), "Gemini");
+      if (res) return res;
     } catch(e) {
       derniereErreur = e;
       console.warn(`Quiz IA — échec Gemini (clé ${i + 1}/${clesGemini.length}):`, e.message);
@@ -3282,8 +3318,8 @@ async function _appelIAQuizFailover(promptTexte, imageData) {
     //    et on passera au fournisseur suivant.
     if (IA_SECOURS_URL && IA_SECOURS_KEY && IA_SECOURS_MODEL) {
       try {
-        const texte = await _appelIACompatibleOpenAI(IA_SECOURS_URL, IA_SECOURS_KEY, IA_SECOURS_MODEL, promptTexte, imageData);
-        return { texte, fournisseur: "Groq (secours)" };
+        const res = await essayerEtRetenir(_appelIACompatibleOpenAI(IA_SECOURS_URL, IA_SECOURS_KEY, IA_SECOURS_MODEL, promptTexte, imageData), "Groq (secours)");
+        if (res) return res;
       } catch(e) {
         derniereErreur = e;
         console.warn("Quiz IA photo — échec fournisseur de secours:", e.message);
@@ -3292,13 +3328,18 @@ async function _appelIAQuizFailover(promptTexte, imageData) {
     // 2) Mistral (mistral-small-latest, vision) — fournisseur établi, clé dédiée
     if (MISTRAL_VISION_KEY) {
       try {
-        const texte = await _appelMistralVision(MISTRAL_VISION_KEY, promptTexte, imageData);
-        return { texte, fournisseur: "Mistral" };
+        const res = await essayerEtRetenir(_appelMistralVision(MISTRAL_VISION_KEY, promptTexte, imageData), "Mistral");
+        if (res) return res;
       } catch(e) {
         derniereErreur = e;
         console.warn("Quiz IA photo — échec Mistral:", e.message);
       }
     }
+    // Aucun fournisseur n'a trouvé de contenu exploitable : si au moins un a
+    // répondu (mais vide), on renvoie cette réponse-là pour que le message
+    // d'erreur affiché à l'élève reste le message standard "photo illisible"
+    // plutôt qu'un message d'échec technique — sinon on relance l'erreur brute.
+    if (meilleurTexteVide) return { texte: meilleurTexteVide, fournisseur: meilleurFournisseurVide };
     throw new Error(derniereErreur
       ? `Lecture de la photo impossible sur tous les fournisseurs configurés (${derniereErreur.message}). Vérifie tes clés IA dans Paramètres (Gemini, secours Groq, Mistral).`
       : "Aucune clé IA capable de lire une photo n'est configurée (Paramètres → clés Gemini Quiz IA, secours Groq avec modèle vision, ou clé Mistral).");
@@ -3396,48 +3437,95 @@ async function _appelMistralVision(apiKey, promptTexte, imageData) {
   return texte;
 }
 
+// Fournisseur utilisé UNIQUEMENT si l'élève s'est connecté avec son propre compte
+// Puter (voir estPuterConnecte() dans 00-core.js) — sa génération de quiz passe
+// alors par le compte Puter de l'élève lui-même (aucune clé LearnUpr consommée),
+// ce qui justifie son quota journalier plus élevé (10 au lieu de 3, voir
+// 02-contenu-eleve.js). Puter est un service tiers indépendant de LearnUpr,
+// présenté clairement comme tel à l'élève au moment de la connexion.
+async function _appelPuterVision(promptTexte, imageData) {
+  if (typeof puter === "undefined" || !puter.ai || !puter.ai.chat) {
+    throw new Error("Service Puter indisponible");
+  }
+  const imageDataUrl = `data:${imageData.mimeType || "image/jpeg"};base64,${imageData.base64}`;
+  const reponse = await puter.ai.chat(promptTexte, imageDataUrl, { model: "google/gemini-2.5-flash" });
+  // puter.ai.chat renvoie soit une string, soit un objet { message: { content } } selon le SDK/version
+  let texte = (typeof reponse === "string") ? reponse : (reponse?.message?.content || reponse?.text || "");
+  texte = texte.replace(/```json|```/g, "").trim();
+  return texte;
+}
+
 // Construit le prompt de génération d'un quiz par IA — même exigence de rigueur
 // factuelle que l'analyse de documents, adaptée au programme scolaire camerounais.
 // Génération UNIQUEMENT à partir d'une photo du cours (mode "sujet texte libre"
 // retiré) : une image est toujours jointe à l'appel (voir _appelIAQuizFailover),
 // le quiz doit se baser EXCLUSIVEMENT sur le contenu visible de cette photo.
-function _construirePromptQuizIA(classe, matiere, chapitre, sujet, nbQuestions) {
+// chapitresExistants (tableau de noms déjà utilisés pour cette classe/matière)
+// est fourni à l'IA pour qu'elle classe le quiz d'après le contenu RÉEL de la
+// photo comparé à ces chapitres — et non plus seulement d'après le texte tapé
+// par l'élève, qui peut être mal orthographié, incomplet ou formulé autrement.
+function _construirePromptQuizIA(classe, matiere, chapitre, sujet, nbQuestions, chapitresExistants) {
   const matLabel = (typeof NOMS_MATIERES !== "undefined" && NOMS_MATIERES[matiere]) || matiere || "culture générale";
+  const listeChapitres = (chapitresExistants && chapitresExistants.length)
+    ? chapitresExistants.map(c => `"${c}"`).join(", ")
+    : null;
 
   return `Tu es un professeur camerounais expérimenté qui prépare un quiz scolaire pour l'application éducative LearnUpr.
 
-Une photo d'un cours (cahier, manuel, fiche) est jointe à ce message, niveau scolaire "${classe || "non précisé"}", matière "${matLabel}", chapitre : "${chapitre}"${sujet ? `, précision de l'élève : "${sujet}"` : ""}.
+Une photo d'un cours (cahier, manuel, fiche) est jointe à ce message, niveau scolaire "${classe || "non précisé"}", matière "${matLabel}". L'élève a tapé lui-même le nom de chapitre "${chapitre}"${sujet ? `, précision de l'élève : "${sujet}"` : ""} — ce nom peut être mal orthographié, incomplet, ou formulé différemment d'un chapitre déjà présent dans la banque de quiz.
+
+CLASSEMENT DU CHAPITRE (à faire AVANT de générer les questions, c'est important) :
+${listeChapitres
+  ? `Chapitres déjà utilisés pour cette classe et cette matière dans la banque de quiz : ${listeChapitres}.
+Compare le contenu RÉEL visible sur la photo (pas seulement le nom tapé par l'élève) à cette liste :
+- Si le sujet du cours sur la photo correspond clairement à l'un de ces chapitres existants, reprends EXACTEMENT ce nom-là (même orthographe, même casse), même s'il diffère du nom tapé par l'élève.
+- Sinon, si aucun chapitre existant ne correspond au contenu réel de la photo, garde le nom tapé par l'élève (tu peux corriger une faute d'orthographe évidente).`
+  : `Aucun chapitre n'existe encore pour cette classe et cette matière dans la banque : garde le nom tapé par l'élève (tu peux corriger une faute d'orthographe évidente).`}
 
 INSTRUCTION PRINCIPALE : Lis attentivement le contenu visible sur la photo (texte du cours, définitions, exemples, énoncés d'exercices, schémas légendés) et génère exactement ${nbQuestions} questions à choix multiples (QCM) portant UNIQUEMENT sur ce contenu.
 - N'invente aucune notion absente de la photo.
-- Si la photo est trop floue, illisible, vide, ou ne contient pas de contenu scolaire exploitable, réponds EXACTEMENT avec un tableau JSON vide : []
+- Si la photo est trop floue, illisible, vide, ou ne contient pas de contenu scolaire exploitable, réponds EXACTEMENT avec cet objet JSON : {"chapitre":"${chapitre}","questions":[]}
 
 RÈGLES STRICTES (si des questions sont possibles) :
 - Chaque question a exactement 4 choix, une seule bonne réponse.
 - Questions factuellement exactes, non ambiguës, fidèles au contenu réel de la photo.
 - LANGAGE SIMPLE : phrases courtes et claires, vocabulaire accessible à un élève de "${classe || "collège/lycée"}". N'utilise une notation ou une expression mathématique QUE si elle est strictement indispensable au sens de la question (ex: une formule, une équation) — jamais de formalisme superflu qui complique la lecture.
 - Explication courte : une seule phrase simple (max 15 mots), pas de jargon.
-- Réponds STRICTEMENT avec un tableau JSON, sans aucun texte avant/après, sans balises markdown, format exact :
-[{"q":"texte de la question","c":["choix A","choix B","choix C","choix D"],"r":0,"explication":"courte explication (1 phrase) de la bonne réponse"}]
+- Réponds STRICTEMENT avec UN SEUL objet JSON, sans aucun texte avant/après, sans balises markdown, format exact :
+{"chapitre":"nom du chapitre retenu selon les règles de classement ci-dessus","questions":[{"q":"texte de la question","c":["choix A","choix B","choix C","choix D"],"r":0,"explication":"courte explication (1 phrase) de la bonne réponse"}]}
 - "r" est l'INDEX entier (0 à 3) du bon choix dans le tableau "c".`;
 }
 
-// Parse la réponse IA brute en tableau de questions valides, en filtrant tout
-// ce qui ne respecte pas le format attendu (4 choix, index de réponse 0-3).
-function _parserQuestionsQuizIA(texteBrut) {
-  let arr;
-  try { arr = JSON.parse(texteBrut); } catch(e) {
+// Parse la réponse IA brute en { chapitre, questions } valides, en filtrant
+// tout ce qui ne respecte pas le format attendu (4 choix, index de réponse 0-3).
+// Compatibilité arrière : si l'IA renvoie encore un simple tableau (ancien
+// format), on l'accepte avec chapitre=null (le code appelant retombera alors
+// sur le filet de sécurité textuel _normaliserChapitreIA).
+function _parserReponseQuizIA(texteBrut) {
+  let data;
+  try { data = JSON.parse(texteBrut); } catch(e) {
     // Tentative de récupération si l'IA a entouré le JSON de texte malgré la consigne
-    const match = texteBrut.match(/\[[\s\S]*\]/);
-    if (match) { try { arr = JSON.parse(match[0]); } catch(e2) { return []; } }
-    else return [];
+    const matchObj = texteBrut.match(/\{[\s\S]*\}/);
+    const matchArr = texteBrut.match(/\[[\s\S]*\]/);
+    if (matchObj) { try { data = JSON.parse(matchObj[0]); } catch(e2) { data = null; } }
+    if (!data && matchArr) { try { data = JSON.parse(matchArr[0]); } catch(e3) { data = null; } }
+    if (!data) return { chapitre: null, questions: [] };
   }
-  if (!Array.isArray(arr)) return [];
-  return arr.filter(q =>
+  let chapitre = null, arr;
+  if (Array.isArray(data)) {
+    arr = data; // ancien format
+  } else if (data && typeof data === "object") {
+    arr = Array.isArray(data.questions) ? data.questions : [];
+    chapitre = (typeof data.chapitre === "string" && data.chapitre.trim()) ? data.chapitre.trim() : null;
+  } else {
+    arr = [];
+  }
+  const questions = arr.filter(q =>
     q && typeof q.q === "string" && q.q.trim() &&
     Array.isArray(q.c) && q.c.length === 4 && q.c.every(c => typeof c === "string" && c.trim()) &&
     Number.isInteger(Number(q.r)) && Number(q.r) >= 0 && Number(q.r) <= 3
   ).map(q => ({ q: q.q.trim(), c: q.c.map(c => c.trim()), r: Number(q.r), explication: (q.explication || "").trim() }));
+  return { chapitre, questions };
 }
 
 // ========== ONGLET MODÉRATEUR "🎬 Test IA" ==========
