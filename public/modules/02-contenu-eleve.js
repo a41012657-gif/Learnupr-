@@ -1076,6 +1076,45 @@ function _quizIALireNbQuestions() {
   return Math.min(QUIZ_IA_NB_QUESTIONS_MAX, Math.max(QUIZ_IA_NB_QUESTIONS_MIN, n));
 }
 
+// ========== CHRONO QUIZ IA — BOUTONS RAPIDES (Illimité / Personnalisé) ==========
+// Durée TOTALE du quiz en secondes, réglée par l'élève avant génération.
+// Indépendante du chrono du quiz "classique" (quiz-timer) : ici la plage
+// pertinente est en minutes vu que le quiz peut compter 10 à 20 questions.
+function _quizIATimerSetValeur(v) {
+  const input = document.getElementById("quizia-timer");
+  const label = document.getElementById("quizia-timer-val");
+  if (input) input.value = v;
+  if (label) label.textContent = v == 0 ? "Illimité" : Math.round(v / 60) + " min";
+}
+function _quizIATimerActiverBouton(btn) {
+  document.querySelectorAll(".quizia-timer-quick-btn").forEach(b => {
+    b.style.background = "var(--card)"; b.style.borderColor = "var(--border)"; b.style.color = "var(--t2)";
+  });
+  if (btn) { btn.style.background = "var(--p)"; btn.style.borderColor = "var(--p)"; btn.style.color = "white"; }
+}
+function quizIATimerRapide(sec, btn) {
+  _quizIATimerSetValeur(sec);
+  _quizIATimerActiverBouton(btn);
+}
+function quizIATimerIllimite(btn) {
+  _quizIATimerSetValeur(0);
+  _quizIATimerActiverBouton(btn);
+}
+function quizIATimerPersonnalise() {
+  const actuel = Math.round((parseInt(document.getElementById("quizia-timer")?.value) || 0) / 60);
+  const saisie = prompt("Durée totale du quiz en minutes (0 = illimité, max 30) :", actuel || 10);
+  if (saisie === null) return;
+  let min = parseInt(saisie, 10);
+  if (isNaN(min) || min < 0) { showToast("❌ Durée invalide", "error"); return; }
+  min = Math.min(min, 30);
+  _quizIATimerSetValeur(min * 60);
+  _quizIATimerActiverBouton(null); // aucun bouton rapide ne correspond forcément à cette valeur
+}
+function _quizIALireTimer() {
+  const v = parseInt(document.getElementById("quizia-timer")?.value, 10);
+  return Number.isFinite(v) ? Math.max(0, v) : 0;
+}
+
 // ── "Mes quiz IA" — historique local des quiz générés par l'élève ──────────
 // Conservé dans localStorage (propre à l'appareil) pour que l'élève puisse
 // rejouer un quiz déjà généré sans consommer une nouvelle génération, ou le
@@ -1122,7 +1161,7 @@ function _quizIARejouer(id) {
   const item = _quizIAMesQuizCharger().find(q => q.id === id);
   if (!item) return;
   fermerMesQuizIA();
-  _quizIALancerLocal(item.questions, item.classe, item.matiere, item.chapitre);
+  _quizIALancerLocal(item.questions, item.classe, item.matiere, item.chapitre, item.timerVal || 0);
 }
 function _quizIASupprimerHisto(id) {
   if (!confirm("Supprimer ce quiz de ton historique ?")) return;
@@ -1315,6 +1354,8 @@ function ouvrirGenerateurQuizIA() {
   document.getElementById("quizia-sujet").value = "";
   const nbSel = document.getElementById("quizia-nb-questions");
   if (nbSel) nbSel.value = String(QUIZ_IA_NB_QUESTIONS_DEFAUT);
+  _quizIATimerSetValeur(0);
+  _quizIATimerActiverBouton(document.getElementById("quiziaTimerIllimiteBtn"));
   quizIARetirerPhoto();
   document.getElementById("quizIAGenModal")?.classList.add("show");
 }
@@ -1426,6 +1467,7 @@ async function genererQuizIA() {
   let   chapitre = document.getElementById("quizia-chapitre")?.value?.trim() || "";
   const sujet    = document.getElementById("quizia-sujet")?.value?.trim() || "";
   const nbQuestions = _quizIALireNbQuestions();
+  const timerVal = _quizIALireTimer();
   if (!classe)    { showToast("❌ Choisis la classe", "error"); return; }
   if (!mat)       { showToast("❌ Choisis la matière", "error"); return; }
   if (!chapitre)  { showToast("❌ Le chapitre est obligatoire", "error"); return; }
@@ -1445,10 +1487,20 @@ async function genererQuizIA() {
   // Le classement du chapitre (éviter les doublons du style "Les fractions" /
   // "fraction" / "Fractions ") est désormais fait par l'IA elle-même à partir
   // du contenu réel de la photo — voir _quizIAGenererEnArrierePlan ci-dessous.
-  _quizIAGenererEnArrierePlan(classe, mat, chapitre, sujet, nbQuestions, photoData);
+  _quizIAGenererEnArrierePlan(classe, mat, chapitre, sujet, nbQuestions, photoData, timerVal);
 }
 
-async function _quizIAGenererEnArrierePlan(classe, mat, chapitre, sujet, nbQuestions, photoData) {
+// Quiz généré le plus récemment, gardé en mémoire pour permettre au bouton
+// "▶️ Jouer maintenant" du toast de fin de génération de lancer directement
+// la partie sans repasser par "📚 Mes quiz IA".
+let _quizIADernierGenere = null;
+function _quizIAJouerDernierGenere() {
+  if (!_quizIADernierGenere) return;
+  const { questions, classe, matiere, chapitre, timerVal } = _quizIADernierGenere;
+  _quizIALancerLocal(questions, classe, matiere, chapitre, timerVal);
+}
+
+async function _quizIAGenererEnArrierePlan(classe, mat, chapitre, sujet, nbQuestions, photoData, timerVal) {
   try {
     // Classement du chapitre par l'IA elle-même : on lui fournit les chapitres
     // déjà existants pour cette classe/matière, elle compare le contenu RÉEL
@@ -1470,8 +1522,10 @@ async function _quizIAGenererEnArrierePlan(classe, mat, chapitre, sujet, nbQuest
 
     // Conservé côté élève pour qu'il puisse rejouer ou supprimer ce quiz plus
     // tard, indépendamment de la vérification par l'équipe LearnUpr ci-dessous.
-    const entree = { id: "qia_" + Date.now(), classe, matiere: mat, chapitre, sujet, questions, date: new Date().toLocaleDateString("fr-FR") };
+    // timerVal (durée totale en secondes, 0 = illimité) est repris tel quel au rejeu.
+    const entree = { id: "qia_" + Date.now(), classe, matiere: mat, chapitre, sujet, questions, timerVal, date: new Date().toLocaleDateString("fr-FR") };
     _quizIAMesQuizSauvegarder(entree);
+    _quizIADernierGenere = { questions, classe, matiere: mat, chapitre, timerVal };
 
     // Copie envoyée en arrière-plan à l'équipe LearnUpr : si validée par un
     // modérateur, ses questions rejoignent le pool général des quiz élèves.
@@ -1485,7 +1539,7 @@ async function _quizIAGenererEnArrierePlan(classe, mat, chapitre, sujet, nbQuest
       }).catch(e => console.warn("Quiz IA — sauvegarde contrôle qualité (arrière-plan):", e.message));
     }
 
-    showToast(`✅ Ton quiz est prêt (${questions.length} questions) — va dans 📚 Mes quiz IA pour le jouer !`, "success");
+    showToast(`✅ Ton quiz est prêt (${questions.length} questions) !`, "success", "▶️ Jouer maintenant", _quizIAJouerDernierGenere);
   } catch(e) {
     showToast("❌ " + (e.message || "Erreur lors de la génération de ton quiz IA, réessaie."), "error");
   }
@@ -1496,9 +1550,12 @@ async function _quizIAGenererEnArrierePlan(classe, mat, chapitre, sujet, nbQuest
 // générateur est que l'élève puisse tout de suite vérifier ce qu'il a retenu
 // de son cours ; réutilise le même moteur (quizState/afficherQuestion) que
 // lancerQuiz(), juste avec les questions IA au lieu de la banque de questions.
-function _quizIALancerLocal(questions, classe, mat, chapitre) {
+function _quizIALancerLocal(questions, classe, mat, chapitre, timerVal) {
   showTab("quiz"); // au cas où l'élève lance ce quiz depuis un autre onglet (notification, historique...)
   quizState.matiere = mat;
+  // Durée réglée par l'élève à la génération (0 = illimité) — sinon illimité par
+  // défaut, pour ne jamais hériter par erreur du chrono d'un quiz classique précédent.
+  quizState.timerVal = Number.isFinite(timerVal) ? timerVal : 0;
   quizState.score = 0;
   quizState.current = 0;
   quizState.answered = false;

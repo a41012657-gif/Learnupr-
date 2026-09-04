@@ -1334,15 +1334,34 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 // ========== TOAST AMÉLIORÉ ==========
-function showToast(msg, type = "default") {
+// actionLabel + actionFn optionnels : affiche un petit bouton cliquable dans le
+// toast (ex: "▶️ Jouer maintenant" après une génération Quiz IA terminée en
+// arrière-plan). Reste rétro-compatible : appelé sans ces 2 params, comportement inchangé.
+let _toastActionFn = null;
+function showToast(msg, type = "default", actionLabel = null, actionFn = null) {
   const t = document.getElementById("toast");
-  t.textContent = msg;
-  t.className = "show";
+  _toastActionFn = (actionLabel && actionFn) ? actionFn : null;
+  if (_toastActionFn) {
+    t.innerHTML = `<span>${msg}</span><button onclick="_toastActionClic()" style="margin-left:8px;background:rgba(255,255,255,0.25);border:none;border-radius:14px;padding:6px 12px;color:inherit;font-weight:800;font-size:11px;cursor:pointer;white-space:nowrap">${actionLabel}</button>`;
+    t.classList.add("toast-action");
+  } else {
+    t.textContent = msg;
+    t.classList.remove("toast-action");
+  }
+  t.className = "show" + (_toastActionFn ? " toast-action" : "");
   if (type === "success") t.classList.add("toast-success");
   else if (type === "error") t.classList.add("toast-error");
   else if (type === "info") t.classList.add("toast-info");
   clearTimeout(t._timer);
-  t._timer = setTimeout(() => t.className = "", 4000);
+  t._timer = setTimeout(() => { t.className = ""; _toastActionFn = null; }, _toastActionFn ? 8000 : 4000);
+}
+function _toastActionClic() {
+  const fn = _toastActionFn;
+  const t = document.getElementById("toast");
+  clearTimeout(t._timer);
+  t.className = "";
+  _toastActionFn = null;
+  if (typeof fn === "function") fn();
 }
 
 // ========== NAVIGATION ==========
