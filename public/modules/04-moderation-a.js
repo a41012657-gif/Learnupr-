@@ -10,11 +10,26 @@
 (function() {
   if (!('serviceWorker' in navigator)) return;
   try {
+    // Recharger UNE SEULE fois quand le nouveau SW prend le contrôle, pour que
+    // la mise à jour (nouvelle version du code) s'applique tout de suite au
+    // lieu de rester silencieuse jusqu'à une 2ème fermeture/réouverture de l'app.
+    // Garde anti-boucle : sessionStorage (survit à ce chargement, pas au suivant).
+    let _lu_swReloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (_lu_swReloading) return;
+      _lu_swReloading = true;
+      window.location.reload();
+    });
+
     navigator.serviceWorker.register('/sw.js').then(reg => {
       console.info('✅ Service Worker LearnUpr actif (mode hors ligne)');
 
       // Notifier le SW de mettre en cache le shell après chaque chargement réussi
       if (reg.active) reg.active.postMessage('CACHE_SHELL');
+
+      // Forcer une vérification de mise à jour à chaque ouverture de l'app
+      // (par défaut le navigateur/Android ne revérifie que sporadiquement).
+      reg.update().catch(() => {});
 
       // Détecter une mise à jour disponible
       reg.addEventListener('updatefound', () => {
